@@ -1,0 +1,75 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: outlook_invoices
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Overrides whatever DATABASE_URL is in backend/.env (that one's for
+      # running the backend directly on the host) - inside compose, the DB
+      # is reachable at the service name "db", not localhost.
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/outlook_invoices
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Only started when the "ui" profile is active (docker compose --profile
+  # ui up, or COMPOSE_PROFILES=ui) - see the ENABLE_UI_FLAG flag in .env and the
+  # deploy.sh/deploy.ps1 scripts, which translate it into that flag for you.
+  # A deployment that only needs the backend API + Outlook mailbox
+  # automation, with no human uploading files by hand, can leave this off
+  # entirely.
+  frontend:
+    profiles: ["ui"]
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        # Baked into the browser bundle at build time - see frontend/Dockerfile.
+        # Override in .env for anything other than local single-host use.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      # Reuses backend/.env for INVOICES_AUTH_USER/PASSWORD, so the same two
+      # values gate both this page's middleware.ts and the backend's
+      # /api/invoices* routes without duplicating them into a second file.
+      - ./backend/.env
+    environment:
+      # Read server-side by the Next.js server (app/api/invoices/** proxy
+      # routes calling the backend server-to-server) - Docker-internal
+      # service name, not localhost ("localhost" from inside the frontend
+      # container means the frontend container itself).
+      INTERNAL_API_BASE_URL: http://backend:8000
+    depends_on:
+      - backend
+
+volumes:
+  db_data:

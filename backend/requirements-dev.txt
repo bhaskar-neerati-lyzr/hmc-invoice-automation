@@ -1,0 +1,5 @@
+# Adds test-only deps on top of the runtime set. Not installed in the
+# production image (backend/Dockerfile only installs requirements.txt) -
+# pytest and friends have no reason to ship in what actually runs.
+-r requirements.txt
+pytest==9.1.1

@@ -1,0 +1,29 @@
+# Local-dev overlay: adds live-reload (bind-mounted source, dev servers) on
+# top of the base docker-compose.yml. Not used in production - apply it
+# explicitly:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ui up --build
+# (or use ./deploy.sh --dev / .\deploy.ps1 -Dev, which does the same thing
+# and also honors ENABLE_UI_FLAG from .env).
+services:
+  backend:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      target: dev
+    # `next dev` reads NEXT_PUBLIC_API_BASE_URL live (no build step, and the
+    # "dev" Dockerfile target doesn't declare that ARG at all) - set it as a
+    # normal runtime env var instead, like the original dev setup did.
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next_cache:/app/.next
+
+volumes:
+  frontend_node_modules:
+  frontend_next_cache:
