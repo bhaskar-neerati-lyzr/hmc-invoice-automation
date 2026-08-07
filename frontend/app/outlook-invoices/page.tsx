@@ -1,7 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import StatsPanel from "../components/StatsPanel";
 import {
   InvoiceDetail,
   InvoiceFilters,
@@ -23,7 +24,7 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
 ];
 
 const EMPTY_FILTERS: InvoiceFilters = {
-  status: "",
+  status: [],
   dateFrom: "",
   dateTo: "",
   sender: "",
@@ -45,9 +46,9 @@ function formatDateLabel(value: string): string {
 
 function filterChips(filters: InvoiceFilters): { key: FilterChipKey; label: string }[] {
   const chips: { key: FilterChipKey; label: string }[] = [];
-  if (filters.status) {
-    const match = STATUS_FILTERS.find((f) => f.value === filters.status);
-    chips.push({ key: "status", label: `Status: ${match?.label ?? filters.status}` });
+  if (filters.status && filters.status.length > 0) {
+    const labels = filters.status.map((s) => STATUS_FILTERS.find((f) => f.value === s)?.label ?? s);
+    chips.push({ key: "status", label: `Status: ${labels.join(", ")}` });
   }
   if (filters.sender) chips.push({ key: "sender", label: `Sender: ${filters.sender}` });
   if (filters.vendor) chips.push({ key: "vendor", label: `Vendor: ${filters.vendor}` });
@@ -67,6 +68,7 @@ function activeFilterCount(filters: InvoiceFilters): number {
 
 function withoutFilter(filters: InvoiceFilters, key: FilterChipKey): InvoiceFilters {
   if (key === "dateRange") return { ...filters, dateFrom: "", dateTo: "" };
+  if (key === "status") return { ...filters, status: [] };
   return { ...filters, [key]: "" };
 }
 
@@ -82,6 +84,23 @@ function FilterField({ label, children }: { label: string; children: React.React
 const filterInputClass =
   "rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
 
+// Popover fields (DateRangeField, StatusMultiSelect) only closed via their
+// own toggle button - a click anywhere else (another field, the page body)
+// left them open on top of everything. This closes one on any click outside
+// its own wrapper, while the click itself still reaches its real target.
+function useCloseOnOutsideClick(ref: React.RefObject<HTMLElement | null>, open: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [ref, open, onClose]);
+}
+
 function DateRangeField({
   dateFrom,
   dateTo,
@@ -92,13 +111,15 @@ function DateRangeField({
   onChange: (next: { dateFrom: string; dateTo: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useCloseOnOutsideClick(ref, open, () => setOpen(false));
   const summary =
     dateFrom || dateTo
       ? `${formatDateLabel(dateFrom) || "any"} – ${formatDateLabel(dateTo) || "any"}`
       : "Any date";
 
   return (
-    <div className="relative flex flex-col gap-1 text-xs">
+    <div ref={ref} className="relative flex flex-col gap-1 text-xs">
       <span className="font-medium text-zinc-500 dark:text-zinc-400">Received</span>
       <button type="button" onClick={() => setOpen((o) => !o)} className={filterInputClass + " text-left"}>
         {summary}
@@ -123,6 +144,48 @@ function DateRangeField({
               className={filterInputClass}
             />
           </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SELECTABLE_STATUSES = STATUS_FILTERS.filter((f) => f.value !== "");
+
+function StatusMultiSelect({ selected, onChange }: { selected: string[]; onChange: (next: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useCloseOnOutsideClick(ref, open, () => setOpen(false));
+  const summary =
+    selected.length === 0
+      ? "All"
+      : selected.length === 1
+        ? (SELECTABLE_STATUSES.find((f) => f.value === selected[0])?.label ?? selected[0])
+        : `${selected.length} selected`;
+
+  function toggle(value: string) {
+    onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
+  }
+
+  return (
+    <div ref={ref} className="relative flex flex-col gap-1 text-xs">
+      <span className="font-medium text-zinc-500 dark:text-zinc-400">Status</span>
+      <button type="button" onClick={() => setOpen((o) => !o)} className={filterInputClass + " text-left"}>
+        {summary}
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 z-10 mt-1 flex min-w-[200px] flex-col gap-1.5 rounded-lg border border-zinc-300 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          {SELECTABLE_STATUSES.map((f) => (
+            <label key={f.value} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                checked={selected.includes(f.value)}
+                onChange={() => toggle(f.value)}
+                className="rounded border-zinc-300 dark:border-zinc-600"
+              />
+              {f.label}
+            </label>
+          ))}
         </div>
       )}
     </div>
@@ -349,6 +412,7 @@ function InvoiceDetailPanel({ detail }: { detail: InvoiceDetail }) {
 
 export default function OutlookInvoicesPage() {
   const router = useRouter();
+  const [view, setView] = useState<"list" | "stats">("list");
   const [items, setItems] = useState<InvoiceSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [appliedFilters, setAppliedFilters] = useState<InvoiceFilters>(EMPTY_FILTERS);
@@ -434,37 +498,74 @@ export default function OutlookInvoicesPage() {
 
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowFilters((s) => !s)}
-              aria-expanded={showFilters}
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              Filters
-              {activeFilterCount(appliedFilters) > 0 && (
-                <span className="rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white dark:bg-zinc-50 dark:text-zinc-900">
-                  {activeFilterCount(appliedFilters)}
-                </span>
-              )}
-            </button>
-            {activeFilterCount(appliedFilters) > 0 && (
-              <button
-                onClick={clearFilters}
-                className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
-              >
-                Clear all
-              </button>
+            <div className="flex rounded-lg border border-zinc-300 p-0.5 dark:border-zinc-700">
+              {(["list", "stats"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={
+                    "rounded-md px-3 py-1 text-sm font-medium capitalize transition-colors " +
+                    (view === v
+                      ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
+                      : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
+                  }
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+
+            {view === "list" && (
+              <>
+                <button
+                  onClick={() => setShowFilters((s) => !s)}
+                  aria-expanded={showFilters}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Filters
+                  {activeFilterCount(appliedFilters) > 0 && (
+                    <span className="rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white dark:bg-zinc-50 dark:text-zinc-900">
+                      {activeFilterCount(appliedFilters)}
+                    </span>
+                  )}
+                </button>
+                {activeFilterCount(appliedFilters) > 0 && (
+                  <button
+                    onClick={clearFilters}
+                    className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </>
+            )}
+            {view === "stats" && (
+              <DateRangeField
+                dateFrom={appliedFilters.dateFrom ?? ""}
+                dateTo={appliedFilters.dateTo ?? ""}
+                onChange={({ dateFrom, dateTo }) => {
+                  const next = { ...appliedFilters, dateFrom, dateTo };
+                  setDraftFilters(next);
+                  setAppliedFilters(next);
+                }}
+              />
             )}
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-xs text-zinc-400 dark:text-zinc-500">{total} total</span>
-            <button
-              onClick={() => load(appliedFilters)}
-              disabled={loading}
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              {loading ? "Refreshing…" : "Refresh"}
-            </button>
+            {view === "list" && (
+              <>
+                <span className="text-xs text-zinc-400 dark:text-zinc-500">{total} total</span>
+                <button
+                  onClick={() => load(appliedFilters)}
+                  disabled={loading}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  {loading ? "Refreshing…" : "Refresh"}
+                </button>
+              </>
+            )}
             <button
               onClick={handleLogout}
               className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
@@ -474,7 +575,9 @@ export default function OutlookInvoicesPage() {
           </div>
         </div>
 
-        {activeFilterCount(appliedFilters) > 0 && (
+        {view === "stats" && <StatsPanel filters={{ dateFrom: appliedFilters.dateFrom, dateTo: appliedFilters.dateTo }} />}
+
+        {view === "list" && activeFilterCount(appliedFilters) > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             {filterChips(appliedFilters).map((chip) => (
               <span
@@ -495,24 +598,15 @@ export default function OutlookInvoicesPage() {
           </div>
         )}
 
-        {showFilters && (
+        {view === "list" && showFilters && (
           <form
             onSubmit={applyFilters}
             className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 bg-white p-4 sm:grid-cols-3 md:grid-cols-4 dark:border-zinc-800 dark:bg-zinc-900"
           >
-            <FilterField label="Status">
-              <select
-                value={draftFilters.status}
-                onChange={(e) => setDraftFilters((f) => ({ ...f, status: e.target.value }))}
-                className={filterInputClass}
-              >
-                {STATUS_FILTERS.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </FilterField>
+            <StatusMultiSelect
+              selected={draftFilters.status ?? []}
+              onChange={(status) => setDraftFilters((f) => ({ ...f, status }))}
+            />
 
             <FilterField label="Sender (name or email)">
               <input
@@ -579,12 +673,13 @@ export default function OutlookInvoicesPage() {
           </form>
         )}
 
-        {error && (
+        {view === "list" && error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {error}
           </div>
         )}
 
+        {view === "list" && (
         <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <table className="w-full text-sm">
             <thead>
@@ -680,6 +775,7 @@ export default function OutlookInvoicesPage() {
             </tbody>
           </table>
         </div>
+        )}
       </main>
     </div>
   );

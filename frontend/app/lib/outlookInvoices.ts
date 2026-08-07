@@ -79,13 +79,37 @@ export type InvoiceDetail = {
 };
 
 export type InvoiceFilters = {
-  status?: string;
+  status?: string[];
   dateFrom?: string; // YYYY-MM-DD
   dateTo?: string; // YYYY-MM-DD
   sender?: string;
   vendor?: string;
   invoiceNumber?: string;
   purchaseOrderNumber?: string;
+};
+
+export type DailyStats = {
+  date: string; // YYYY-MM-DD
+  pending: number;
+  processed: number;
+  skipped_no_attachments: number;
+  skipped_bad_attachment: number;
+  failed: number;
+  avg_processing_ms: number | null;
+  avg_ocr_ms: number | null;
+};
+
+export type StatsResponse = {
+  total: number;
+  by_status: Record<InvoiceStatus, number>;
+  invoice_split: { is_invoice: number; not_invoice: number };
+  latency: {
+    processing_ms: { avg: number | null; p95: number | null };
+    ocr_ms: { avg: number | null; p95: number | null };
+  };
+  daily: DailyStats[];
+  top_senders: { sender: string; count: number }[];
+  skip_reasons: { reason: string; count: number }[];
 };
 
 // Deliberately same-origin, relative paths - NOT NEXT_PUBLIC_API_BASE_URL.
@@ -98,7 +122,7 @@ export async function fetchInvoices(
   filters: InvoiceFilters = {}
 ): Promise<{ total: number; items: InvoiceSummary[] }> {
   const params = new URLSearchParams({ limit: "100" });
-  if (filters.status) params.set("status", filters.status);
+  for (const s of filters.status ?? []) params.append("status", s);
   if (filters.dateFrom) params.set("date_from", filters.dateFrom);
   if (filters.dateTo) params.set("date_to", filters.dateTo);
   if (filters.sender) params.set("sender", filters.sender);
@@ -119,4 +143,17 @@ export async function fetchInvoiceDetail(id: number): Promise<InvoiceDetail> {
 
 export function attachmentDownloadUrl(emailId: number, attachmentId: number): string {
   return `/api/invoices/${emailId}/attachments/${attachmentId}`;
+}
+
+export async function fetchStats(
+  filters: Pick<InvoiceFilters, "dateFrom" | "dateTo"> = {}
+): Promise<StatsResponse> {
+  const params = new URLSearchParams();
+  if (filters.dateFrom) params.set("date_from", filters.dateFrom);
+  if (filters.dateTo) params.set("date_to", filters.dateTo);
+  const qs = params.toString();
+
+  const res = await fetch(`/api/invoices/stats${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to load stats.");
+  return res.json();
 }

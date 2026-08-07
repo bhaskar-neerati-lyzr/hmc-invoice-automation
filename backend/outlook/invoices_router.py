@@ -11,10 +11,15 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from sqlalchemy import desc, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy import desc, func, or_
+from sqlalchemy.orm import Query as SAQuery, joinedload
 
 from . import config, database, models
+
+# Every non-terminal-or-terminal status Email.status can hold - used to
+# zero-fill status breakdowns so a status with zero rows in range still
+# appears (as 0), rather than being silently absent from the response.
+ALL_STATUSES = ["pending", "processed", "skipped_no_attachments", "skipped_bad_attachment", "failed"]
 
 _security = HTTPBasic()
 
@@ -54,6 +59,25 @@ def _attachment_summary(attachment: models.EmailAttachment) -> dict:
     }
 
 
+def _apply_date_range(query: SAQuery, date_from: date | None, date_to: date | None) -> SAQuery:
+    """Filters `query` on Email.received_at - shared by list_invoices and
+    get_stats so the date-range semantics (inclusive both ends, UTC) stay
+    identical between "here are the matching rows" and "here's what they
+    add up to." Works on any query that has Email in its FROM clause
+    (selecting from Email directly, or joined in), not just Email itself."""
+    if date_from:
+        query = query.filter(
+            models.Email.received_at >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if date_to:
+        # date_to is inclusive of the whole day, so the upper bound is midnight of the *next* day.
+        query = query.filter(
+            models.Email.received_at
+            < datetime.combine(date_to, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)
+        )
+    return query
+
+
 def _summary(email: models.Email) -> dict:
     invoice = email.invoice
     return {
@@ -77,7 +101,7 @@ def _summary(email: models.Email) -> dict:
 
 @router.get("")
 def list_invoices(
-    status: str | None = Query(default=None),
+    status: list[str] | None = Query(default=None, description="Repeat the param for multiple statuses (OR'd together)"),
     date_from: date | None = Query(default=None, description="Received on/after this date (inclusive, UTC)"),
     date_to: date | None = Query(default=None, description="Received on/before this date (inclusive, UTC)"),
     sender: str | None = Query(default=None, description="Case-insensitive substring match on sender name or email"),
@@ -91,17 +115,8 @@ def list_invoices(
         query = session.query(models.Email).options(joinedload(models.Email.invoice))
 
         if status:
-            query = query.filter(models.Email.status == status)
-        if date_from:
-            query = query.filter(
-                models.Email.received_at >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
-            )
-        if date_to:
-            # date_to is inclusive of the whole day, so the upper bound is midnight of the *next* day.
-            query = query.filter(
-                models.Email.received_at
-                < datetime.combine(date_to, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)
-            )
+            query = query.filter(models.Email.status.in_(status))
+        query = _apply_date_range(query, date_from, date_to)
         if sender:
             pattern = f"%{sender}%"
             query = query.filter(or_(models.Email.sender_name.ilike(pattern), models.Email.sender_email.ilike(pattern)))
@@ -119,6 +134,130 @@ def list_invoices(
         total = query.count()
         emails = query.order_by(desc(models.Email.created_at)).offset(offset).limit(limit).all()
         return {"total": total, "items": [_summary(e) for e in emails]}
+
+
+# Registered BEFORE /{email_id} deliberately - Starlette matches routes in
+# registration order, and /{email_id} (an untyped path template) matches
+# the literal string "stats" too. Only the email_id function parameter's
+# `int` type causes a 422 when FastAPI later tries to convert "stats" - by
+# then it's too late, that route already "matched" and stats would never
+# be reached if it were registered after.
+@router.get("/stats")
+def get_stats(
+    date_from: date | None = Query(default=None, description="Received on/after this date (inclusive, UTC)"),
+    date_to: date | None = Query(default=None, description="Received on/before this date (inclusive, UTC)"),
+):
+    with database.get_session() as session:
+
+        def ranged(query: SAQuery) -> SAQuery:
+            return _apply_date_range(query, date_from, date_to)
+
+        total = ranged(session.query(models.Email)).count()
+
+        status_counts = dict.fromkeys(ALL_STATUSES, 0)
+        for status, count in ranged(session.query(models.Email.status, func.count())).group_by(models.Email.status):
+            status_counts[status] = count
+
+        invoice_split = {"is_invoice": 0, "not_invoice": 0}
+        invoice_rows = (
+            ranged(session.query(models.Invoice.is_invoice, func.count()).join(models.Email))
+            .group_by(models.Invoice.is_invoice)
+            .all()
+        )
+        for is_invoice, count in invoice_rows:
+            invoice_split["is_invoice" if is_invoice else "not_invoice"] = count
+
+        def scalar_ms(query: SAQuery) -> float | None:
+            value = query.scalar()
+            return round(value, 1) if value is not None else None
+
+        latency = {
+            "processing_ms": {
+                "avg": scalar_ms(ranged(session.query(func.avg(models.Email.processing_duration_ms)))),
+                "p95": scalar_ms(
+                    ranged(session.query(func.percentile_cont(0.95).within_group(models.Email.processing_duration_ms)))
+                ),
+            },
+            "ocr_ms": {
+                "avg": scalar_ms(
+                    ranged(session.query(func.avg(models.Invoice.ocr_duration_ms)).join(models.Email))
+                ),
+                "p95": scalar_ms(
+                    ranged(
+                        session.query(
+                            func.percentile_cont(0.95).within_group(models.Invoice.ocr_duration_ms)
+                        ).join(models.Email)
+                    )
+                ),
+            },
+        }
+
+        # Daily breakdown - two grouped queries (status counts, avg
+        # durations) merged in Python rather than one query, since a GROUP
+        # BY day+status doesn't combine cleanly with per-day averages in a
+        # single result shape.
+        day_col = func.date_trunc("day", models.Email.received_at).label("day")
+        daily: dict[str, dict] = {}
+
+        status_by_day = (
+            ranged(session.query(day_col, models.Email.status, func.count()))
+            .filter(models.Email.received_at.isnot(None))
+            .group_by(day_col, models.Email.status)
+            .all()
+        )
+        for day, status, count in status_by_day:
+            key = day.date().isoformat()
+            daily.setdefault(key, {"date": key, **dict.fromkeys(ALL_STATUSES, 0), "avg_processing_ms": None, "avg_ocr_ms": None})
+            daily[key][status] = count
+
+        latency_by_day = (
+            ranged(
+                session.query(
+                    day_col,
+                    func.avg(models.Email.processing_duration_ms),
+                    func.avg(models.Invoice.ocr_duration_ms),
+                ).outerjoin(models.Invoice, models.Invoice.email_id == models.Email.id)
+            )
+            .filter(models.Email.received_at.isnot(None))
+            .group_by(day_col)
+            .all()
+        )
+        for day, avg_processing, avg_ocr in latency_by_day:
+            key = day.date().isoformat()
+            daily.setdefault(key, {"date": key, **dict.fromkeys(ALL_STATUSES, 0), "avg_processing_ms": None, "avg_ocr_ms": None})
+            daily[key]["avg_processing_ms"] = round(avg_processing, 1) if avg_processing is not None else None
+            daily[key]["avg_ocr_ms"] = round(avg_ocr, 1) if avg_ocr is not None else None
+
+        top_senders_rows = (
+            ranged(session.query(models.Email.sender_email, func.count()).filter(models.Email.sender_email.isnot(None)))
+            .group_by(models.Email.sender_email)
+            .order_by(desc(func.count()))
+            .limit(10)
+            .all()
+        )
+        top_senders = [{"sender": sender, "count": count} for sender, count in top_senders_rows]
+
+        skip_reason_rows = (
+            ranged(
+                session.query(models.EmailAttachment.skip_reason, func.count())
+                .join(models.Email, models.EmailAttachment.email_id == models.Email.id)
+                .filter(models.EmailAttachment.forwarded.is_(False))
+            )
+            .group_by(models.EmailAttachment.skip_reason)
+            .order_by(desc(func.count()))
+            .all()
+        )
+        skip_reasons = [{"reason": reason, "count": count} for reason, count in skip_reason_rows]
+
+        return {
+            "total": total,
+            "by_status": status_counts,
+            "invoice_split": invoice_split,
+            "latency": latency,
+            "daily": sorted(daily.values(), key=lambda row: row["date"]),
+            "top_senders": top_senders,
+            "skip_reasons": skip_reasons,
+        }
 
 
 @router.get("/{email_id}")
