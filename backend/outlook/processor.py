@@ -20,21 +20,68 @@ logger = logging.getLogger("outlook.processor")
 # would just get a 400 from /api/ocr anyway.
 ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "application/pdf"}
 
+# A message in any of these statuses is done - a notification for it (Graph
+# redelivering, or SQS redelivering a message we finished but hadn't yet
+# deleted) is a true duplicate and should be skipped, not retried.
+TERMINAL_SUCCESS_STATUSES = {"processed", "skipped_no_attachments", "skipped_bad_attachment"}
 
-def _claim_message(message_id: str) -> bool:
-    """Insert a placeholder Email row for this message_id.
 
-    Relies on the DB's unique constraint on message_id for idempotency: Graph
-    notifications are at-least-once, so a duplicate notification for a
-    message already claimed (or already fully processed) fails here and is
-    skipped rather than reprocessed.
+def _claim_or_retry_message(message_id: str) -> bool:
+    """Claim a brand-new message_id, or reclaim one still `pending`/`failed`
+    for another attempt. Returns False only for a message that already
+    reached a terminal-success status (see TERMINAL_SUCCESS_STATUSES) - a
+    genuine duplicate that should be skipped, not reprocessed.
+
+    Not fully race-proof against two workers claiming the same retry-eligible
+    row concurrently (a plain read-then-write, no row lock) - relying instead
+    on SQS's visibility timeout (set above worst-case processing time, per
+    misc/setup-guides/05-outlook-inbox-ocr-architecture.md) to keep a message
+    from being handed to a second worker while the first is still on it. That
+    covers the actual delivery path; it wouldn't cover, say, manually
+    replaying the same message_id through two workers by hand.
     """
     try:
         with database.get_session() as session:
             session.add(models.Email(message_id=message_id, status="pending"))
+        return True
     except IntegrityError:
-        return False
+        pass  # already exists - fall through and check whether it's retryable
+
+    with database.get_session() as session:
+        email = session.query(models.Email).filter_by(message_id=message_id).one()
+        if email.status in TERMINAL_SUCCESS_STATUSES:
+            return False
+        email.status = "pending"
+        email.error_message = None
     return True
+
+
+def _clear_attachments(message_id: str) -> None:
+    """Wipe any EmailAttachment rows left over from a prior attempt before
+    re-fetching/re-saving them - _save_attachments() always appends, so
+    replaying it on top of leftover rows from an earlier attempt would
+    duplicate them. A no-op on a fresh claim (nothing to clear yet)."""
+    with database.get_session() as session:
+        email = session.query(models.Email).filter_by(message_id=message_id).one()
+        email.attachments = []  # cascade="all, delete-orphan" deletes the removed rows
+
+
+def _existing_invoice_is_invoice(message_id: str) -> bool | None:
+    """None if no Invoice row exists yet for this email; otherwise that
+    invoice's is_invoice flag.
+
+    Detects the one edge case where "failed" doesn't mean "nothing was
+    saved": OCR can succeed and _save_invoice() can commit, and only *then*
+    does something in the tail of process_notification raise (e.g. the
+    Outlook-tag write) - which still marks the email "failed" and would
+    normally make it retry-eligible. Retrying that blindly would call Lyzr
+    again for an already-processed email and then hit invoices.email_id's
+    unique constraint. Checking this first means the retry just re-finishes
+    the status/tag instead of redoing OCR."""
+    with database.get_session() as session:
+        email = session.query(models.Email).filter_by(message_id=message_id).one()
+        invoice = session.query(models.Invoice).filter_by(email_id=email.id).one_or_none()
+        return invoice.is_invoice if invoice else None
 
 
 def _update_email_from_message(message_id: str, message: dict) -> None:
@@ -49,6 +96,9 @@ def _update_email_from_message(message_id: str, message: dict) -> None:
             datetime.fromisoformat(received.replace("Z", "+00:00")) if received else None
         )
         email.has_attachments = bool(message.get("hasAttachments"))
+        body = message.get("body") or {}
+        email.body = body.get("content")
+        email.body_content_type = body.get("contentType")
 
 
 def _save_attachments(message_id: str, records: list[dict]) -> None:
@@ -220,15 +270,33 @@ async def _tag_email(message_id: str, category: str) -> None:
 async def process_notification(message_id: str) -> None:
     """The deferred work triggered after the webhook has already acked Graph.
 
-    Never raises past this point in production use (it runs as a
-    BackgroundTask - nothing surfaces an exception from here except the
-    server log), so every failure path is caught and recorded on the Email
-    row instead.
+    Always marks the Email row "failed" (with the error) before doing
+    anything else on a failure, then re-raises. The DB write is the audit
+    trail; the re-raise matters just as much - outlook/worker.py only
+    deletes an SQS message after this returns *without* raising, so a
+    re-raise is what leaves the message in the queue for SQS's own
+    redelivery/DLQ to take over as the actual retry mechanism. (Under the
+    BackgroundTasks path this re-raise is inert beyond an extra log line -
+    nothing awaits this call there either way.)
     """
-    if not _claim_message(message_id):
-        logger.info("message %s already claimed/processed, skipping", message_id)
+    if not _claim_or_retry_message(message_id):
+        logger.info("message %s already fully processed, skipping", message_id)
         return
 
+    already_is_invoice = _existing_invoice_is_invoice(message_id)
+    if already_is_invoice is not None:
+        # A prior attempt got all the way through OCR and saved an Invoice
+        # row, then failed on something after that (e.g. the Outlook tag
+        # write) - don't call Lyzr again, just finish the bookkeeping.
+        _mark_status(message_id, "processed")
+        await _tag_email(
+            message_id,
+            graph_client.CATEGORY_PROCESSED if already_is_invoice else graph_client.CATEGORY_NOT_INVOICE,
+        )
+        logger.info("message %s already had a saved invoice from a prior attempt, finishing status only", message_id)
+        return
+
+    _clear_attachments(message_id)
     await _tag_email(message_id, graph_client.CATEGORY_QUEUED)
 
     try:
@@ -274,3 +342,4 @@ async def process_notification(message_id: str) -> None:
         logger.exception("message %s failed to process", message_id)
         _mark_status(message_id, "failed", error=str(exc))
         await _tag_email(message_id, graph_client.CATEGORY_FAILED)
+        raise

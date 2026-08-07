@@ -35,6 +35,23 @@ OUTLOOK_UPDATE_CATEGORIES = os.environ.get("OUTLOOK_UPDATE_CATEGORIES_FLAG", "tr
     "no",
 )
 
+# When true, webhook_router.py enqueues {message_id} onto SQS instead of
+# running processor.process_notification in a FastAPI BackgroundTask, and
+# outlook/worker.py (a separate process - `python -m outlook.worker`) is
+# what actually calls it. Defaults to false so local dev/docker-compose
+# keeps working without any AWS setup - flip on in deployments that run the
+# worker service and have SQS_QUEUE_URL pointed at a real queue.
+USE_SQS_QUEUE = os.environ.get("USE_SQS_QUEUE_FLAG", "false").strip().lower() in ("true", "1", "yes")
+
+# Required when USE_SQS_QUEUE is true. Standard queue (not FIFO) - see
+# misc/setup-guides/05-outlook-inbox-ocr-architecture.md for why.
+SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
+
+# How long the worker's ReceiveMessage call blocks waiting for a message
+# before returning empty - see the 05 doc's "long polling" section. 20 is
+# SQS's own maximum.
+SQS_WAIT_TIME_SECONDS = int(os.environ.get("SQS_WAIT_TIME_SECONDS", "20"))
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Gates every /api/invoices* route (see invoices_router.require_auth). Same

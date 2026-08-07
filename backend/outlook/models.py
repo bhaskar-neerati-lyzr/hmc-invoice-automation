@@ -21,8 +21,12 @@ class Base(DeclarativeBase):
 class Email(Base):
     """One row per Microsoft Graph message the webhook has processed.
 
-    `message_id` also doubles as the dedup key: a notification for a message
-    already present here is skipped rather than reprocessed.
+    `message_id` also doubles as the dedup/retry key (see
+    processor._claim_or_retry_message): a notification for a message that
+    already reached a terminal-success status here is skipped as a true
+    duplicate, but one still `pending`/`failed` is retried in place rather
+    than reprocessed as a new row - necessary once notifications arrive via
+    SQS, which redelivers at-least-once on failure.
     """
 
     __tablename__ = "emails"
@@ -34,7 +38,16 @@ class Email(Base):
     sender_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False)
-    # pending | processed | skipped_no_attachment | skipped_no_valid_attachment | failed
+    # The message body verbatim, from Graph's `body.content`/`body.contentType`
+    # (usually "html", occasionally "text") - filled in by
+    # processor._update_email_from_message alongside subject/sender. Not
+    # sanitized/rendered - stored exactly as Graph returned it.
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_content_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # pending | processed | skipped_no_attachments | skipped_bad_attachment | failed
+    # "pending" and "failed" are both retry-eligible - see
+    # processor._claim_or_retry_message - since a "pending" row can mean the
+    # worker crashed mid-flight before reaching a terminal status.
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

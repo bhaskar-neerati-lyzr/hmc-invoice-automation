@@ -144,6 +144,8 @@ def get_invoice(email_id: int):
             "sender_name": email.sender_name,
             "sender_email": email.sender_email,
             "received_at": email.received_at.isoformat() if email.received_at else None,
+            "body": email.body,
+            "body_content_type": email.body_content_type,
             "status": email.status,
             "error_message": email.error_message,
             "attachments": [_attachment_summary(a) for a in email.attachments],

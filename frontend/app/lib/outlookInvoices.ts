@@ -68,6 +68,8 @@ export type InvoiceDetail = {
   sender_name: string | null;
   sender_email: string | null;
   received_at: string | null;
+  body: string | null;
+  body_content_type: string | null;
   status: InvoiceStatus;
   error_message: string | null;
   attachments: AttachmentMeta[];

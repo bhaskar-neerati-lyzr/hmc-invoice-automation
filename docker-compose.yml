@@ -71,5 +71,32 @@ services:
     depends_on:
       - backend
 
+  # Only started when the "queue" profile is active. Two independent
+  # switches control the SQS path: USE_SQS_QUEUE_FLAG (in backend/.env)
+  # decides whether webhook_router.py enqueues at all; this profile decides
+  # whether anything is actually running to consume what it enqueues -
+  # running the worker with the flag off (or vice versa) just means nothing
+  # happens. Needs real AWS credentials with SQS access, sourced from the
+  # host environment (aws configure / AWS_PROFILE) - there's no local SQS
+  # emulator wired up here, so this talks to a real queue even in dev.
+  worker:
+    profiles: ["queue"]
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    command: ["python", "-m", "outlook.worker"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/outlook_invoices
+      AWS_ACCESS_KEY_ID:
+      AWS_SECRET_ACCESS_KEY:
+      AWS_SESSION_TOKEN:
+      AWS_REGION:
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   db_data:

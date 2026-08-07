@@ -7,7 +7,6 @@ import {
   InvoiceFilters,
   InvoiceStatus,
   InvoiceSummary,
-  attachmentDownloadUrl,
   fetchInvoiceDetail,
   fetchInvoices,
 } from "../lib/outlookInvoices";
@@ -217,37 +216,17 @@ function InvoiceDetailPanel({ detail }: { detail: InvoiceDetail }) {
       )}
 
       <div>
-        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-          Attachments
-        </div>
-        {detail.attachments.length === 0 ? (
-          <p className="italic text-zinc-400 dark:text-zinc-500">None recorded</p>
-        ) : (
-          <ul className="flex flex-col gap-1">
-            {detail.attachments.map((a) => (
-              <li key={a.id} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-zinc-700 dark:text-zinc-200">
-                  {a.has_content ? (
-                    <a
-                      href={attachmentDownloadUrl(detail.id, a.id)}
-                      className="text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                    >
-                      {a.filename}
-                    </a>
-                  ) : (
-                    a.filename
-                  )}{" "}
-                  <span className="text-zinc-400 dark:text-zinc-500">({a.content_type})</span>
-                </span>
-                {a.forwarded ? (
-                  <span className="text-green-600 dark:text-green-400">forwarded</span>
-                ) : (
-                  <span className="text-zinc-400 dark:text-zinc-500">skipped — {a.skip_reason}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+        <a
+          href={`/outlook-invoices/${detail.id}/email`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+        >
+          View Email →
+        </a>
+        <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">
+          Sender, received time, message body, and attachment downloads.
+        </p>
       </div>
 
       {invoice && (
@@ -610,6 +589,9 @@ export default function OutlookInvoicesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-400 dark:border-zinc-700">
+                <th className="w-8 px-3 py-2 font-medium">
+                  <span className="sr-only">Expand</span>
+                </th>
                 <th className="px-3 py-2 font-medium">Received</th>
                 <th className="px-3 py-2 font-medium">Sender</th>
                 <th className="px-3 py-2 font-medium">Subject</th>
@@ -623,57 +605,78 @@ export default function OutlookInvoicesPage() {
             <tbody>
               {!loading && items.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-sm italic text-zinc-400 dark:text-zinc-500">
+                  <td colSpan={9} className="px-3 py-8 text-center text-sm italic text-zinc-400 dark:text-zinc-500">
                     No invoices processed yet — send a test email to the mailbox.
                   </td>
                 </tr>
               )}
-              {items.map((item) => (
-                <Fragment key={item.id}>
-                  <tr
-                    onClick={() => toggleRow(item.id)}
-                    className="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
-                  >
-                    <td className="px-3 py-2 whitespace-nowrap text-zinc-600 dark:text-zinc-300">
-                      {formatDate(item.received_at)}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Cell value={item.sender_email} />
-                    </td>
-                    <td className="max-w-[220px] truncate px-3 py-2">
-                      <Cell value={item.subject} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Cell value={item.vendor_name} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Cell value={item.invoice_number} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <CompactCell value={item.purchase_order_number} />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Cell value={item.total} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <StatusBadge status={item.status} isInvoice={item.is_invoice} />
-                    </td>
-                  </tr>
-                  {expandedId === item.id && (
-                    <tr key={`${item.id}-detail`}>
-                      <td colSpan={8} className="px-3 pb-4">
-                        {detailLoading ? (
-                          <p className="py-4 text-center text-sm text-zinc-400 dark:text-zinc-500">Loading…</p>
-                        ) : detail ? (
-                          <InvoiceDetailPanel detail={detail} />
-                        ) : (
-                          <p className="py-4 text-center text-sm text-red-500">Failed to load details.</p>
-                        )}
+              {items.map((item) => {
+                const expanded = expandedId === item.id;
+                return (
+                  <Fragment key={item.id}>
+                    <tr className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50">
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleRow(item.id)}
+                          aria-expanded={expanded}
+                          aria-label={expanded ? "Collapse row" : "Expand row"}
+                          className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-100"
+                        >
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+                          >
+                            <path d="M5 7l5 6 5-6" />
+                          </svg>
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-zinc-600 dark:text-zinc-300">
+                        {formatDate(item.received_at)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Cell value={item.sender_email} />
+                      </td>
+                      <td className="max-w-[220px] truncate px-3 py-2">
+                        <Cell value={item.subject} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Cell value={item.vendor_name} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Cell value={item.invoice_number} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <CompactCell value={item.purchase_order_number} />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Cell value={item.total} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <StatusBadge status={item.status} isInvoice={item.is_invoice} />
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              ))}
+                    {expanded && (
+                      <tr key={`${item.id}-detail`}>
+                        <td colSpan={9} className="px-3 pb-4">
+                          {detailLoading ? (
+                            <p className="py-4 text-center text-sm text-zinc-400 dark:text-zinc-500">Loading…</p>
+                          ) : detail ? (
+                            <InvoiceDetailPanel detail={detail} />
+                          ) : (
+                            <p className="py-4 text-center text-sm text-red-500">Failed to load details.</p>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
