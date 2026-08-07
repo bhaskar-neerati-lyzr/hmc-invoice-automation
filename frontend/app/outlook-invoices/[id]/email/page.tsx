@@ -13,6 +13,10 @@ function formatDate(value: string | null): string {
   return parsed.toLocaleString();
 }
 
+function formatDuration(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export default function EmailDetailPage() {
   const params = useParams<{ id: string }>();
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
@@ -75,6 +79,18 @@ export default function EmailDetailPage() {
                   <span className="text-zinc-400 dark:text-zinc-500">Received: </span>
                   {formatDate(detail.received_at)}
                 </div>
+                {detail.processing_duration_ms != null && (
+                  <div>
+                    <span className="text-zinc-400 dark:text-zinc-500">Processed in: </span>
+                    {formatDuration(detail.processing_duration_ms)}
+                    {detail.invoice?.ocr_duration_ms != null && (
+                      <span className="text-zinc-400 dark:text-zinc-500">
+                        {" "}
+                        (OCR: {formatDuration(detail.invoice.ocr_duration_ms)})
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

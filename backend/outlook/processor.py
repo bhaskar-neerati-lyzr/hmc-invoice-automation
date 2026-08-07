@@ -7,6 +7,7 @@ result.
 import base64
 import binascii
 import logging
+import time
 from datetime import datetime
 
 import httpx
@@ -117,21 +118,26 @@ def _save_attachments(message_id: str, records: list[dict]) -> None:
             )
 
 
-def _mark_status(message_id: str, status: str, error: str | None = None) -> None:
+def _mark_status(
+    message_id: str, status: str, error: str | None = None, duration_ms: int | None = None
+) -> None:
     with database.get_session() as session:
         email = session.query(models.Email).filter_by(message_id=message_id).one()
         email.status = status
         if error:
             email.error_message = error
+        if duration_ms is not None:
+            email.processing_duration_ms = duration_ms
 
 
-def _save_invoice(message_id: str, result: dict) -> None:
+def _save_invoice(message_id: str, result: dict, ocr_duration_ms: int | None = None) -> None:
     with database.get_session() as session:
         email = session.query(models.Email).filter_by(message_id=message_id).one()
         invoice = models.Invoice(
             email_id=email.id,
             session_id=result.get("session_id"),
             is_invoice=bool(result.get("is_invoice")),
+            ocr_duration_ms=ocr_duration_ms,
             vendor_name=result.get("vendor_name"),
             vendor_address=result.get("vendor_address"),
             vendor_zipcode=result.get("vendor_zipcode"),
@@ -284,12 +290,22 @@ async def process_notification(message_id: str) -> None:
         logger.info("message %s already fully processed, skipping", message_id)
         return
 
+    # Starts here, not at webhook receipt - deliberately excludes Graph's
+    # ack (process_notification only ever runs after the 200 is already
+    # sent) and, with USE_SQS_QUEUE_FLAG on, excludes time spent waiting in
+    # SQS too. Per-attempt: a retried message's duration reflects only its
+    # latest attempt, not a sum across retries.
+    start = time.monotonic()
+
+    def elapsed_ms() -> int:
+        return round((time.monotonic() - start) * 1000)
+
     already_is_invoice = _existing_invoice_is_invoice(message_id)
     if already_is_invoice is not None:
         # A prior attempt got all the way through OCR and saved an Invoice
         # row, then failed on something after that (e.g. the Outlook tag
         # write) - don't call Lyzr again, just finish the bookkeeping.
-        _mark_status(message_id, "processed")
+        _mark_status(message_id, "processed", duration_ms=elapsed_ms())
         await _tag_email(
             message_id,
             graph_client.CATEGORY_PROCESSED if already_is_invoice else graph_client.CATEGORY_NOT_INVOICE,
@@ -311,7 +327,7 @@ async def process_notification(message_id: str) -> None:
         _update_email_from_message(message_id, message)
 
         if not message.get("hasAttachments"):
-            _mark_status(message_id, "skipped_no_attachments")
+            _mark_status(message_id, "skipped_no_attachments", duration_ms=elapsed_ms())
             await _tag_email(message_id, graph_client.CATEGORY_SKIPPED_NO_ATTACHMENTS)
             logger.info("message %s has no attachments, skipping", message_id)
             return
@@ -321,26 +337,31 @@ async def process_notification(message_id: str) -> None:
         _save_attachments(message_id, attachment_records)
 
         if not forwardable:
-            _mark_status(message_id, "skipped_bad_attachment")
+            _mark_status(message_id, "skipped_bad_attachment", duration_ms=elapsed_ms())
             await _tag_email(message_id, graph_client.CATEGORY_SKIPPED_BAD_ATTACHMENT)
             logger.info("message %s has no OCR-eligible attachments, skipping", message_id)
             return
 
+        ocr_start = time.monotonic()
         result = await _forward_to_ocr(forwardable)
-        _save_invoice(message_id, result)
-        _mark_status(message_id, "processed")
+        ocr_duration_ms = round((time.monotonic() - ocr_start) * 1000)
+
+        _save_invoice(message_id, result, ocr_duration_ms=ocr_duration_ms)
+        _mark_status(message_id, "processed", duration_ms=elapsed_ms())
         await _tag_email(
             message_id,
             graph_client.CATEGORY_PROCESSED if result.get("is_invoice") else graph_client.CATEGORY_NOT_INVOICE,
         )
         logger.info(
-            "message %s processed: is_invoice=%s session_id=%s",
+            "message %s processed: is_invoice=%s session_id=%s duration_ms=%s ocr_duration_ms=%s",
             message_id,
             result.get("is_invoice"),
             result.get("session_id"),
+            elapsed_ms(),
+            ocr_duration_ms,
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad, this is the last line of defense
-        logger.exception("message %s failed to process", message_id)
-        _mark_status(message_id, "failed", error=str(exc))
+        logger.exception("message %s failed to process after %sms", message_id, elapsed_ms())
+        _mark_status(message_id, "failed", error=str(exc), duration_ms=elapsed_ms())
         await _tag_email(message_id, graph_client.CATEGORY_FAILED)
         raise

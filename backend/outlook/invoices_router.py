@@ -148,12 +148,14 @@ def get_invoice(email_id: int):
             "body_content_type": email.body_content_type,
             "status": email.status,
             "error_message": email.error_message,
+            "processing_duration_ms": email.processing_duration_ms,
             "attachments": [_attachment_summary(a) for a in email.attachments],
             "invoice": None
             if invoice is None
             else {
                 "session_id": invoice.session_id,
                 "is_invoice": invoice.is_invoice,
+                "ocr_duration_ms": invoice.ocr_duration_ms,
                 "vendor_name": invoice.vendor_name,
                 "vendor_address": invoice.vendor_address,
                 "vendor_zipcode": invoice.vendor_zipcode,

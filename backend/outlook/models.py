@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -50,6 +51,16 @@ class Email(Base):
     # worker crashed mid-flight before reaching a terminal status.
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Wall-clock time of the most recent process_notification() attempt that
+    # actually reached a terminal outcome (or the "already had an invoice"
+    # repair short-circuit) - set alongside every _mark_status() call, never
+    # on the "duplicate, skip entirely" fast path. Per-attempt, not
+    # cumulative across retries - a retried email's value reflects only its
+    # latest attempt. Deliberately excludes time spent acknowledging Graph's
+    # webhook and (if USE_SQS_QUEUE_FLAG is on) time spent waiting in SQS -
+    # this is processing time only, from the moment process_notification()
+    # starts doing real work.
+    processing_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     invoice: Mapped["Invoice | None"] = relationship(back_populates="email", uselist=False)
@@ -92,6 +103,10 @@ class Invoice(Base):
     email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"), unique=True)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_invoice: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Wall-clock time of just the _forward_to_ocr() call (the /api/ocr round
+    # trip, which itself covers Lyzr's asset-upload + chat-inference calls) -
+    # a subset of Email.processing_duration_ms, not a separate clock.
+    ocr_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     vendor_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     vendor_address: Mapped[str | None] = mapped_column(Text, nullable=True)

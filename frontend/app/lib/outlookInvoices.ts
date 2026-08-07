@@ -42,6 +42,7 @@ export type InvoiceSummary = {
 export type InvoiceFields = {
   session_id: string | null;
   is_invoice: boolean;
+  ocr_duration_ms: number | null;
   vendor_name: string | null;
   vendor_address: string | null;
   vendor_zipcode: string | null;
@@ -72,6 +73,7 @@ export type InvoiceDetail = {
   body_content_type: string | null;
   status: InvoiceStatus;
   error_message: string | null;
+  processing_duration_ms: number | null;
   attachments: AttachmentMeta[];
   invoice: InvoiceFields | null;
 };
