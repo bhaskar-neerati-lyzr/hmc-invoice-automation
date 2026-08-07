@@ -7,7 +7,19 @@ import { OcrResult, resultFromApi } from "./lib/invoice";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
-const ACCEPTED_TYPES = ["image/png", "image/jpeg", "application/pdf"];
+const ACCEPTED_TYPES = ["image/png", "image/jpeg", "application/pdf", "image/tiff"];
+
+// Mirrors backend/main.py's MAX_FILE_SIZE_BYTES - checked here too so a
+// too-large file gets an immediate, specific error instead of waiting on
+// a network round-trip just to be told the same thing by the server.
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+
+// No browser renders TIFF natively in an <img> - would show a broken-image
+// icon instead of "no preview available" - so it gets the same
+// no-thumbnail treatment as PDF.
+function hasImagePreview(contentType: string): boolean {
+  return contentType !== "application/pdf" && contentType !== "image/tiff";
+}
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -35,17 +47,28 @@ export default function Home() {
   function pickFiles(candidates: FileList | File[] | undefined) {
     if (!candidates || candidates.length === 0) return;
     const list = Array.from(candidates);
+
     const rejected = list.some((candidate) => !ACCEPTED_TYPES.includes(candidate.type));
     if (rejected) {
       setStatus("error");
-      setErrorMessage("Unsupported file type. Please upload PNG, JPG, or PDF pages only.");
+      setErrorMessage("Unsupported file type. Please upload PNG, JPG, PDF, or TIFF pages only.");
       return;
     }
+
+    const tooLarge = list.find((candidate) => candidate.size > MAX_FILE_SIZE_BYTES);
+    if (tooLarge) {
+      setStatus("error");
+      setErrorMessage(
+        `'${tooLarge.name}' is ${(tooLarge.size / 1024 / 1024).toFixed(1)} MB, over the ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB limit.`
+      );
+      return;
+    }
+
     revokePreviews(files);
     setFiles(
       list.map((candidate) => ({
         file: candidate,
-        previewUrl: candidate.type === "application/pdf" ? null : URL.createObjectURL(candidate),
+        previewUrl: hasImagePreview(candidate.type) ? URL.createObjectURL(candidate) : null,
       }))
     );
     resetResult();
@@ -105,7 +128,7 @@ export default function Home() {
             Invoice Extractor
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Upload one or more pages (PNG, JPG, or PDF) of an invoice to extract its details.
+            Upload one or more pages (PNG, JPG, PDF, or TIFF) of an invoice to extract its details.
           </p>
         </div>
 
@@ -119,7 +142,7 @@ export default function Home() {
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf"
+            accept=".png,.jpg,.jpeg,.pdf,.tif,.tiff,image/png,image/jpeg,application/pdf,image/tiff"
             onChange={handleFileChange}
             className="hidden"
           />
@@ -130,7 +153,7 @@ export default function Home() {
                 Click to browse, or drag files here
               </span>
               <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                PNG, JPG, PDF — select multiple pages of the same invoice
+                PNG, JPG, PDF, TIFF — select multiple pages of the same invoice
               </span>
             </>
           )}

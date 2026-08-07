@@ -126,9 +126,9 @@ export default function EmailDetailPage() {
                         <span className="text-zinc-400 dark:text-zinc-500">({a.content_type})</span>
                       </span>
                       {a.forwarded ? (
-                        <span className="text-green-600 dark:text-green-400">forwarded</span>
+                        <span className="text-green-600 dark:text-green-400">sent to OCR - Lyzr Agent</span>
                       ) : (
-                        <span className="text-zinc-400 dark:text-zinc-500">skipped — {a.skip_reason}</span>
+                        <span className="text-zinc-400 dark:text-zinc-500">not sent to OCR - Lyzr Agent, reason: {a.skip_reason}</span>
                       )}
                     </li>
                   ))}

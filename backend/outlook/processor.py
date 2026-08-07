@@ -17,8 +17,9 @@ from . import config, database, graph_client, models
 logger = logging.getLogger("outlook.processor")
 
 # Must mirror backend/main.py's ALLOWED_CONTENT_TYPES exactly - anything else
-# would just get a 400 from /api/ocr anyway.
-ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "application/pdf"}
+# would just get a 400 from /api/ocr anyway. Raw TIFF bytes are forwarded
+# as-is (same as PDF) - /api/ocr does the actual rasterization.
+ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "application/pdf", "image/tiff"}
 
 # A message in any of these statuses is done - a notification for it (Graph
 # redelivering, or SQS redelivering a message we finished but hadn't yet
