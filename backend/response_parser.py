@@ -52,7 +52,11 @@ def parse_agent_output(value) -> dict:
         match = FENCED_JSON.search(value)
         candidate = match.group(1) if match else value.strip()
         try:
-            payload = json.loads(candidate)
+            # strict=False: the agent sometimes emits real line breaks inside
+            # string values (e.g. multi-line addresses) instead of escaping
+            # them as \n, which strict JSON parsing rejects as an invalid
+            # control character.
+            payload = json.loads(candidate, strict=False)
         except json.JSONDecodeError:
             payload = None
 

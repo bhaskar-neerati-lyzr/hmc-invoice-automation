@@ -39,14 +39,7 @@ services:
       retries: 5
       start_period: 10s
 
-  # Only started when the "ui" profile is active (docker compose --profile
-  # ui up, or COMPOSE_PROFILES=ui) - see the ENABLE_UI_FLAG flag in .env and the
-  # deploy.sh/deploy.ps1 scripts, which translate it into that flag for you.
-  # A deployment that only needs the backend API + Outlook mailbox
-  # automation, with no human uploading files by hand, can leave this off
-  # entirely.
   frontend:
-    profiles: ["ui"]
     build:
       context: ./frontend
       target: runner

@@ -1,9 +1,8 @@
 # Local-dev overlay: adds live-reload (bind-mounted source, dev servers) on
 # top of the base docker-compose.yml. Not used in production - apply it
 # explicitly:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ui up --build
-# (or use ./deploy.sh --dev / .\deploy.ps1 -Dev, which does the same thing
-# and also honors ENABLE_UI_FLAG from .env).
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# (or use ./deploy.sh --dev / .\deploy.ps1 -Dev, which does the same thing).
 services:
   backend:
     build:

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Bring the app up/down via docker compose, translating the ENABLE_UI_FLAG
-# flag in .env into Compose's --profile ui (see docker-compose.yml's
-# frontend service, which only starts when that profile is active).
+# Bring the app up/down via docker compose.
 #
 # Usage:
 #   ./deploy.sh [--dev] [up|down|logs]
@@ -31,27 +29,19 @@ for arg in "$@"; do
   esac
 done
 
-ENABLE_UI=$(grep -E '^ENABLE_UI_FLAG=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '[:space:]')
-ENABLE_UI=${ENABLE_UI:-false}
-
 COMPOSE_FILES=(-f docker-compose.yml)
 if [ "$DEV" = true ]; then
   COMPOSE_FILES+=(-f docker-compose.dev.yml)
 fi
 
-PROFILE_ARGS=()
-if [ "$ENABLE_UI" = "true" ]; then
-  PROFILE_ARGS=(--profile ui)
-fi
-
 case "$ACTION" in
   up)
-    docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" up -d --build
+    docker compose "${COMPOSE_FILES[@]}" up -d --build
     ;;
   down)
-    docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" down
+    docker compose "${COMPOSE_FILES[@]}" down
     ;;
   logs)
-    docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" logs -f
+    docker compose "${COMPOSE_FILES[@]}" logs -f
     ;;
 esac
