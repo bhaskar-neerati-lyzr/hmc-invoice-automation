@@ -1,14 +1,30 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { API_BASE_URL, useAuth } from "../lib/auth";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { login, user } = useAuth();
   const next = searchParams.get("next") || "/outlook-invoices";
 
-  const [username, setUsername] = useState("");
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current) return;
+    seeded.current = true;
+    // Bootstraps the admin account (from SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD)
+    // on a fresh database - safe/idempotent to call repeatedly. Runs here,
+    // not post-login, since nobody can log in until this has run once.
+    fetch(`${API_BASE_URL}/api/seed`, { method: "POST" }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (user) router.replace(next);
+  }, [user, next, router]);
+
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,19 +34,11 @@ function LoginForm() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Incorrect username or password.");
-      }
+      await login(email, password);
       router.replace(next);
-      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
       setLoading(false);
     }
   }
@@ -46,11 +54,11 @@ function LoginForm() {
       </div>
 
       <label className="flex flex-col gap-1 text-sm">
-        <span className="font-medium text-zinc-700 dark:text-zinc-200">Username</span>
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Email</span>
         <input
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           autoFocus
           autoComplete="username"
           className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"

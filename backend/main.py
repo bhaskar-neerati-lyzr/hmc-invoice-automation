@@ -12,6 +12,8 @@ from pdf_render import render_pdf_to_jpegs, render_tiff_to_jpegs
 from response_parser import parse_agent_output
 from outlook.webhook_router import router as outlook_webhook_router
 from outlook.invoices_router import router as outlook_invoices_router
+from outlook.auth_router import router as outlook_auth_router
+from outlook.kpis_router import router as outlook_kpis_router
 
 load_dotenv()
 
@@ -35,6 +37,8 @@ app.add_middleware(
 
 app.include_router(outlook_webhook_router)
 app.include_router(outlook_invoices_router)
+app.include_router(outlook_auth_router)
+app.include_router(outlook_kpis_router)
 
 
 async def pages_from_upload(file: UploadFile) -> list[bytes]:

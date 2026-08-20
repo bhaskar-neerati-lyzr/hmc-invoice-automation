@@ -54,8 +54,16 @@ SQS_WAIT_TIME_SECONDS = int(os.environ.get("SQS_WAIT_TIME_SECONDS", "20"))
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Gates every /api/invoices* route (see invoices_router.require_auth). Same
-# two values are also read by the frontend's middleware.ts, so a viewer only
-# has to authenticate once per browser per origin - see setup-guides.
-INVOICES_AUTH_USER = os.environ.get("INVOICES_AUTH_USER")
-INVOICES_AUTH_PASSWORD = os.environ.get("INVOICES_AUTH_PASSWORD")
+# JWT signing secret for the multi-user login (see outlook/auth.py). Same
+# purpose as invoice-process's APP_JWT_SECRET - a long random string, e.g.
+# `openssl rand -base64 32`. Not enforced here; auth.py raises when a token
+# actually needs signing/verifying and this is unset.
+APP_JWT_SECRET = os.environ.get("APP_JWT_SECRET")
+
+# There is no sign-up flow - the very first admin account is bootstrapped
+# from these two vars by POST /api/seed, which the frontend's login page
+# calls automatically on first load (mirrors invoice-process's proven
+# pattern for the exact same chicken-and-egg problem). Set a real password
+# here at deploy time; it's never hardcoded in source.
+SEED_ADMIN_EMAIL = os.environ.get("SEED_ADMIN_EMAIL")
+SEED_ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD")

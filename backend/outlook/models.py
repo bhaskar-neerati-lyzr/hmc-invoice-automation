@@ -61,6 +61,12 @@ class Email(Base):
     # this is processing time only, from the moment process_notification()
     # starts doing real work.
     processing_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Attempts made so far (incremented on each failure in
+    # processor.process_notification). Once this reaches
+    # DEAD_LETTER_RETRY_THRESHOLD (see processor.py), the message stops being
+    # reclaimed by _claim_or_retry_message and a DeadLetterEmail row is
+    # written instead - see processor.py for the transition.
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     invoice: Mapped["Invoice | None"] = relationship(back_populates="email", uselist=False)
@@ -147,3 +153,40 @@ class InvoiceLineItem(Base):
     total_price: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="line_items")
+
+
+class DeadLetterEmail(Base):
+    """One row per email given up on after DEAD_LETTER_RETRY_THRESHOLD
+    failed attempts (see processor.py). Deliberately standalone - no FK to
+    Email - since this is meant to survive/outlive the original row's
+    lifecycle and only ever needs message_id to cross-reference it."""
+
+    __tablename__ = "dead_letter_emails"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(256), index=True)
+    subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    moved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class User(Base):
+    """Platform account for the full-stack app's own login (admin/viewer),
+    replacing the old single-shared-password Basic Auth. Single table -
+    unlike invoice-process's users+user_roles split, which only existed
+    because of a package (lyzr-architect-pg) constraint that doesn't apply
+    here."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), default="viewer")
+    # True until the user completes their first password change (either the
+    # forced first-login reset, or a later voluntary change) - drives the
+    # Invited vs Active status shown in the Users screen.
+    must_reset_password: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

@@ -6,44 +6,21 @@ rather than only ones that produced a clean invoice - useful for seeing what
 the automation actually did with everything that came in.
 """
 
-import secrets
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Query as SAQuery, joinedload
 
-from . import config, database, models
+from . import database, models
+from .auth import get_current_user
 
 # Every non-terminal-or-terminal status Email.status can hold - used to
 # zero-fill status breakdowns so a status with zero rows in range still
 # appears (as 0), rather than being silently absent from the response.
 ALL_STATUSES = ["pending", "processed", "skipped_no_attachments", "skipped_bad_attachment", "failed"]
 
-_security = HTTPBasic()
-
-
-def require_auth(credentials: HTTPBasicCredentials = Depends(_security)) -> None:
-    """Gates every route on this router - see config.INVOICES_AUTH_USER/PASSWORD.
-
-    Fails closed: if the credentials aren't configured at all, this refuses
-    every request rather than silently leaving the router open, since an
-    unset auth var is far more likely to mean "not deployed yet" than
-    "auth intentionally disabled."
-    """
-    if not config.INVOICES_AUTH_USER or not config.INVOICES_AUTH_PASSWORD:
-        raise HTTPException(500, "Invoices auth is not configured (set INVOICES_AUTH_USER/INVOICES_AUTH_PASSWORD)")
-
-    # compare_digest instead of == to avoid leaking username/password length
-    # or content through response-timing differences.
-    user_ok = secrets.compare_digest(credentials.username, config.INVOICES_AUTH_USER)
-    password_ok = secrets.compare_digest(credentials.password, config.INVOICES_AUTH_PASSWORD)
-    if not (user_ok and password_ok):
-        raise HTTPException(401, "Incorrect username or password", headers={"WWW-Authenticate": "Basic"})
-
-
-router = APIRouter(prefix="/api/invoices", tags=["invoices"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/invoices", tags=["invoices"], dependencies=[Depends(get_current_user)])
 
 
 def _attachment_summary(attachment: models.EmailAttachment) -> dict:
@@ -89,6 +66,7 @@ def _summary(email: models.Email) -> dict:
         "received_at": email.received_at.isoformat() if email.received_at else None,
         "status": email.status,
         "error_message": email.error_message,
+        "retry_count": email.retry_count,
         "is_invoice": invoice.is_invoice if invoice else None,
         "vendor_name": invoice.vendor_name if invoice else None,
         "invoice_number": invoice.invoice_number if invoice else None,
@@ -288,6 +266,7 @@ def get_invoice(email_id: int):
             "status": email.status,
             "error_message": email.error_message,
             "processing_duration_ms": email.processing_duration_ms,
+            "retry_count": email.retry_count,
             "attachments": [_attachment_summary(a) for a in email.attachments],
             "invoice": None
             if invoice is None

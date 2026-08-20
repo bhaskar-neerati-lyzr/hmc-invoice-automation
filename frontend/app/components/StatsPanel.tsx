@@ -119,7 +119,15 @@ function ChartTooltip({
   );
 }
 
-export default function StatsPanel({ filters }: { filters: Pick<InvoiceFilters, "dateFrom" | "dateTo"> }) {
+type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
+
+export default function StatsPanel({
+  authFetch,
+  filters,
+}: {
+  authFetch: AuthFetch;
+  filters: Pick<InvoiceFilters, "dateFrom" | "dateTo">;
+}) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -128,11 +136,11 @@ export default function StatsPanel({ filters }: { filters: Pick<InvoiceFilters, 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: fetch-on-mount/filter-change
     setLoading(true);
     setError("");
-    fetchStats(filters)
+    fetchStats(authFetch, filters)
       .then((data) => setStats(data))
       .catch((err) => setError(err instanceof Error ? err.message : "Something went wrong."))
       .finally(() => setLoading(false));
-  }, [filters.dateFrom, filters.dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authFetch, filters.dateFrom, filters.dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading && !stats) {
     return <p className="py-8 text-center text-sm text-zinc-400 dark:text-zinc-500">Loading stats…</p>;

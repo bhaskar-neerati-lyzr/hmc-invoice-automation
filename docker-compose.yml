@@ -50,17 +50,6 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    env_file:
-      # Reuses backend/.env for INVOICES_AUTH_USER/PASSWORD, so the same two
-      # values gate both this page's middleware.ts and the backend's
-      # /api/invoices* routes without duplicating them into a second file.
-      - ./backend/.env
-    environment:
-      # Read server-side by the Next.js server (app/api/invoices/** proxy
-      # routes calling the backend server-to-server) - Docker-internal
-      # service name, not localhost ("localhost" from inside the frontend
-      # container means the frontend container itself).
-      INTERNAL_API_BASE_URL: http://backend:8000
     depends_on:
       - backend
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import StatsPanel from "../components/StatsPanel";
+import StatsPanel from "../../components/StatsPanel";
+import { useAuth } from "../../lib/auth";
 import {
   InvoiceDetail,
   InvoiceFilters,
@@ -10,7 +10,7 @@ import {
   InvoiceSummary,
   fetchInvoiceDetail,
   fetchInvoices,
-} from "../lib/outlookInvoices";
+} from "../../lib/outlookInvoices";
 
 const NO_DATA = "No data available";
 
@@ -411,7 +411,7 @@ function InvoiceDetailPanel({ detail }: { detail: InvoiceDetail }) {
 }
 
 export default function OutlookInvoicesPage() {
-  const router = useRouter();
+  const { authFetch } = useAuth();
   const [view, setView] = useState<"list" | "stats">("list");
   const [items, setItems] = useState<InvoiceSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -429,7 +429,7 @@ export default function OutlookInvoicesPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await fetchInvoices(filters);
+      const data = await fetchInvoices(authFetch, filters);
       setItems(data.items);
       setTotal(data.total);
     } catch (err) {
@@ -442,6 +442,7 @@ export default function OutlookInvoicesPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: fetch-on-mount/filter-change
     load(appliedFilters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters]);
 
   function applyFilters(e: React.FormEvent) {
@@ -462,11 +463,6 @@ export default function OutlookInvoicesPage() {
     setAppliedFilters(next);
   }
 
-  async function handleLogout() {
-    await fetch("/api/logout", { method: "POST" });
-    router.replace("/login");
-  }
-
   async function toggleRow(id: number) {
     if (expandedId === id) {
       setExpandedId(null);
@@ -477,7 +473,7 @@ export default function OutlookInvoicesPage() {
     setDetail(null);
     setDetailLoading(true);
     try {
-      const data = await fetchInvoiceDetail(id);
+      const data = await fetchInvoiceDetail(authFetch, id);
       setDetail(data);
     } catch {
       setDetail(null);
@@ -566,16 +562,12 @@ export default function OutlookInvoicesPage() {
                 </button>
               </>
             )}
-            <button
-              onClick={handleLogout}
-              className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
-            >
-              Log out
-            </button>
           </div>
         </div>
 
-        {view === "stats" && <StatsPanel filters={{ dateFrom: appliedFilters.dateFrom, dateTo: appliedFilters.dateTo }} />}
+        {view === "stats" && (
+          <StatsPanel authFetch={authFetch} filters={{ dateFrom: appliedFilters.dateFrom, dateTo: appliedFilters.dateTo }} />
+        )}
 
         {view === "list" && activeFilterCount(appliedFilters) > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -694,13 +686,14 @@ export default function OutlookInvoicesPage() {
                 <th className="px-3 py-2 font-medium">Invoice #</th>
                 <th className="px-3 py-2 font-medium">PO #</th>
                 <th className="px-3 py-2 text-right font-medium">Total</th>
+                <th className="px-3 py-2 text-right font-medium">Retries</th>
                 <th className="px-3 py-2 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
               {!loading && items.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-sm italic text-zinc-400 dark:text-zinc-500">
+                  <td colSpan={10} className="px-3 py-8 text-center text-sm italic text-zinc-400 dark:text-zinc-500">
                     No invoices processed yet — send a test email to the mailbox.
                   </td>
                 </tr>
@@ -752,13 +745,16 @@ export default function OutlookInvoicesPage() {
                       <td className="px-3 py-2 text-right">
                         <Cell value={item.total} />
                       </td>
+                      <td className="px-3 py-2 text-right text-zinc-600 dark:text-zinc-300">
+                        {item.retry_count > 0 ? item.retry_count : <span className="text-zinc-300 dark:text-zinc-600">–</span>}
+                      </td>
                       <td className="px-3 py-2">
                         <StatusBadge status={item.status} isInvoice={item.is_invoice} />
                       </td>
                     </tr>
                     {expanded && (
                       <tr key={`${item.id}-detail`}>
-                        <td colSpan={9} className="px-3 pb-4">
+                        <td colSpan={10} className="px-3 pb-4">
                           {detailLoading ? (
                             <p className="py-4 text-center text-sm text-zinc-400 dark:text-zinc-500">Loading…</p>
                           ) : detail ? (

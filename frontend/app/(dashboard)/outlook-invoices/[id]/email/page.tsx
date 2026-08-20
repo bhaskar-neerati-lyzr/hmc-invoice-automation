@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { InvoiceDetail, attachmentDownloadUrl, fetchInvoiceDetail } from "../../../lib/outlookInvoices";
+import { useAuth } from "../../../../lib/auth";
+import { InvoiceDetail, downloadAttachment, fetchInvoiceDetail } from "../../../../lib/outlookInvoices";
 
 const NO_DATA = "No data available";
 
@@ -19,9 +20,11 @@ function formatDuration(ms: number): string {
 
 export default function EmailDetailPage() {
   const params = useParams<{ id: string }>();
+  const { authFetch } = useAuth();
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     const id = Number(params.id);
@@ -32,11 +35,22 @@ export default function EmailDetailPage() {
       return;
     }
     setLoading(true);
-    fetchInvoiceDetail(id)
+    fetchInvoiceDetail(authFetch, id)
       .then((data) => setDetail(data))
       .catch((err) => setError(err instanceof Error ? err.message : "Something went wrong."))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
+
+  async function handleDownload(attachmentId: number, filename: string) {
+    if (!detail) return;
+    setDownloadError("");
+    try {
+      await downloadAttachment(authFetch, detail.id, attachmentId, filename);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Failed to download attachment.");
+    }
+  }
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-4 py-16 dark:bg-zinc-950">
@@ -79,6 +93,12 @@ export default function EmailDetailPage() {
                   <span className="text-zinc-400 dark:text-zinc-500">Received: </span>
                   {formatDate(detail.received_at)}
                 </div>
+                {detail.retry_count > 0 && (
+                  <div>
+                    <span className="text-zinc-400 dark:text-zinc-500">Retries: </span>
+                    {detail.retry_count}
+                  </div>
+                )}
                 {detail.processing_duration_ms != null && (
                   <div>
                     <span className="text-zinc-400 dark:text-zinc-500">Processed in: </span>
@@ -122,6 +142,9 @@ export default function EmailDetailPage() {
               <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                 Attachments
               </div>
+              {downloadError && (
+                <p className="mb-2 text-xs text-red-600 dark:text-red-400">{downloadError}</p>
+              )}
               {detail.attachments.length === 0 ? (
                 <p className="italic text-zinc-400 dark:text-zinc-500">None recorded</p>
               ) : (
@@ -130,12 +153,13 @@ export default function EmailDetailPage() {
                     <li key={a.id} className="flex items-center justify-between gap-2 text-sm">
                       <span className="text-zinc-700 dark:text-zinc-200">
                         {a.has_content ? (
-                          <a
-                            href={attachmentDownloadUrl(detail.id, a.id)}
+                          <button
+                            type="button"
+                            onClick={() => handleDownload(a.id, a.filename)}
                             className="text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                           >
                             {a.filename}
-                          </a>
+                          </button>
                         ) : (
                           a.filename
                         )}{" "}

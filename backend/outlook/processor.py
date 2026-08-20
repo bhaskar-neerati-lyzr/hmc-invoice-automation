@@ -27,6 +27,11 @@ ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "application/pdf", "image/ti
 # deleted) is a true duplicate and should be skipped, not retried.
 TERMINAL_SUCCESS_STATUSES = {"processed", "skipped_no_attachments", "skipped_bad_attachment"}
 
+# After this many failed attempts, a message stops being retried and moves
+# to DeadLetterEmail instead (see _mark_failed below) - previously there was
+# no cap at all, every "failed" row was retried forever.
+DEAD_LETTER_RETRY_THRESHOLD = 5
+
 
 def _claim_or_retry_message(message_id: str) -> bool:
     """Claim a brand-new message_id, or reclaim one still `pending`/`failed`
@@ -52,6 +57,10 @@ def _claim_or_retry_message(message_id: str) -> bool:
     with database.get_session() as session:
         email = session.query(models.Email).filter_by(message_id=message_id).one()
         if email.status in TERMINAL_SUCCESS_STATUSES:
+            return False
+        if email.retry_count >= DEAD_LETTER_RETRY_THRESHOLD:
+            # Already dead-lettered - a DeadLetterEmail row exists for this
+            # message_id (written by _mark_failed below); don't reclaim it.
             return False
         email.status = "pending"
         email.error_message = None
@@ -128,6 +137,29 @@ def _mark_status(
             email.error_message = error
         if duration_ms is not None:
             email.processing_duration_ms = duration_ms
+
+
+def _mark_failed(message_id: str, error: str, duration_ms: int | None = None) -> None:
+    """Marks a failed attempt and increments retry_count. Once retry_count
+    reaches DEAD_LETTER_RETRY_THRESHOLD, also writes a DeadLetterEmail row -
+    _claim_or_retry_message then refuses to reclaim this message_id again."""
+    with database.get_session() as session:
+        email = session.query(models.Email).filter_by(message_id=message_id).one()
+        email.status = "failed"
+        email.error_message = error
+        if duration_ms is not None:
+            email.processing_duration_ms = duration_ms
+        email.retry_count += 1
+
+        if email.retry_count >= DEAD_LETTER_RETRY_THRESHOLD:
+            session.add(
+                models.DeadLetterEmail(
+                    message_id=email.message_id,
+                    subject=email.subject,
+                    last_error=error,
+                    retry_count=email.retry_count,
+                )
+            )
 
 
 def _save_invoice(message_id: str, result: dict, ocr_duration_ms: int | None = None) -> None:
@@ -362,6 +394,6 @@ async def process_notification(message_id: str) -> None:
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad, this is the last line of defense
         logger.exception("message %s failed to process after %sms", message_id, elapsed_ms())
-        _mark_status(message_id, "failed", error=str(exc), duration_ms=elapsed_ms())
+        _mark_failed(message_id, error=str(exc), duration_ms=elapsed_ms())
         await _tag_email(message_id, graph_client.CATEGORY_FAILED)
         raise

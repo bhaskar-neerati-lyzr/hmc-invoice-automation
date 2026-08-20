@@ -30,6 +30,7 @@ export type InvoiceSummary = {
   received_at: string | null;
   status: InvoiceStatus;
   error_message: string | null;
+  retry_count: number;
   is_invoice: boolean | null;
   vendor_name: string | null;
   invoice_number: string | null;
@@ -74,6 +75,7 @@ export type InvoiceDetail = {
   status: InvoiceStatus;
   error_message: string | null;
   processing_duration_ms: number | null;
+  retry_count: number;
   attachments: AttachmentMeta[];
   invoice: InvoiceFields | null;
 };
@@ -112,13 +114,33 @@ export type StatsResponse = {
   skip_reasons: { reason: string; count: number }[];
 };
 
-// Deliberately same-origin, relative paths - NOT NEXT_PUBLIC_API_BASE_URL.
-// These hit this Next.js server's own /api/invoices/** proxy routes
-// (app/api/invoices/**), which forward to the FastAPI backend server-side.
-// The browser never talks to the backend directly for this data, which is
-// what keeps this to a single login (see middleware.ts + app/login).
+export type KpisResponse = {
+  total: number;
+  pending: number;
+  processed: number;
+  failed: number;
+  skipped_no_attachments: number;
+  skipped_bad_attachment: number;
+  dead_lettered: number;
+};
+
+export type DeadLetterEmail = {
+  id: number;
+  message_id: string;
+  subject: string | null;
+  last_error: string | null;
+  retry_count: number;
+  moved_at: string;
+};
+
+type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
+
+// All calls hit the FastAPI backend directly via authFetch (which prefixes
+// NEXT_PUBLIC_API_BASE_URL and attaches the Bearer token) - there is no
+// same-origin Next.js proxy layer anymore (see app/lib/auth.tsx).
 
 export async function fetchInvoices(
+  authFetch: AuthFetch,
   filters: InvoiceFilters = {}
 ): Promise<{ total: number; items: InvoiceSummary[] }> {
   const params = new URLSearchParams({ limit: "100" });
@@ -130,22 +152,19 @@ export async function fetchInvoices(
   if (filters.invoiceNumber) params.set("invoice_number", filters.invoiceNumber);
   if (filters.purchaseOrderNumber) params.set("purchase_order_number", filters.purchaseOrderNumber);
 
-  const res = await fetch(`/api/invoices?${params.toString()}`, { cache: "no-store" });
+  const res = await authFetch(`/api/invoices?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to load invoices.");
   return res.json();
 }
 
-export async function fetchInvoiceDetail(id: number): Promise<InvoiceDetail> {
-  const res = await fetch(`/api/invoices/${id}`, { cache: "no-store" });
+export async function fetchInvoiceDetail(authFetch: AuthFetch, id: number): Promise<InvoiceDetail> {
+  const res = await authFetch(`/api/invoices/${id}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to load invoice detail.");
   return res.json();
 }
 
-export function attachmentDownloadUrl(emailId: number, attachmentId: number): string {
-  return `/api/invoices/${emailId}/attachments/${attachmentId}`;
-}
-
 export async function fetchStats(
+  authFetch: AuthFetch,
   filters: Pick<InvoiceFilters, "dateFrom" | "dateTo"> = {}
 ): Promise<StatsResponse> {
   const params = new URLSearchParams();
@@ -153,7 +172,49 @@ export async function fetchStats(
   if (filters.dateTo) params.set("date_to", filters.dateTo);
   const qs = params.toString();
 
-  const res = await fetch(`/api/invoices/stats${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+  const res = await authFetch(`/api/invoices/stats${qs ? `?${qs}` : ""}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to load stats.");
+  return res.json();
+}
+
+// Downloads via blob instead of a plain <a href>: a bare link navigation
+// can't carry an Authorization header, so the browser would hit FastAPI
+// with no Bearer token and get a 401. This fetches the bytes through
+// authFetch (which does attach the header) and triggers a save client-side.
+export async function downloadAttachment(authFetch: AuthFetch, emailId: number, attachmentId: number, filename: string) {
+  const res = await authFetch(`/api/invoices/${emailId}/attachments/${attachmentId}`);
+  if (!res.ok) throw new Error("Failed to download attachment.");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function fetchKpis(
+  authFetch: AuthFetch,
+  range: { receivedFrom?: string; receivedTo?: string } = {}
+): Promise<KpisResponse> {
+  const params = new URLSearchParams();
+  if (range.receivedFrom) params.set("received_from", range.receivedFrom);
+  if (range.receivedTo) params.set("received_to", range.receivedTo);
+  const qs = params.toString();
+
+  const res = await authFetch(`/api/kpis${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to load KPIs.");
+  return res.json();
+}
+
+export async function fetchDeadLetterEmails(
+  authFetch: AuthFetch,
+  params: { limit?: number } = {}
+): Promise<{ data: DeadLetterEmail[]; meta: { total: number; limit: number; offset: number } }> {
+  const qs = new URLSearchParams({ limit: String(params.limit ?? 100) });
+  const res = await authFetch(`/api/dead-letter-emails?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to load dead-letter emails.");
   return res.json();
 }

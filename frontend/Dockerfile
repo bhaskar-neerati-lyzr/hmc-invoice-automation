@@ -27,8 +27,8 @@ WORKDIR /app
 # NEXT_PUBLIC_ vars are compiled into the browser bundle by `next build`,
 # not read at container start - must arrive as a build arg, not a runtime
 # `environment:` value (which would have no effect on what ships to the
-# browser). INTERNAL_API_BASE_URL is server-only and deliberately NOT here -
-# it stays a normal runtime env var, set on the "runner" stage's container.
+# browser). This is the only backend URL the frontend needs now - it calls
+# FastAPI directly with a Bearer token, no server-side proxy layer anymore.
 ARG NEXT_PUBLIC_API_BASE_URL
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
