@@ -1,26 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Flex:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
+/* Palette lifted from hunt-military/invoice-process's app/globals.css
+   (teal primary, amber secondary, shadcn-style HSL tokens) so this
+   dashboard and that one read as the same design system. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: 190 42.9% 97.3%;
+  --foreground: 192.9 63.6% 8.6%;
+  --card: 180 100% 99.4%;
+  --card-foreground: 197.1 70% 3.9%;
+  --primary: 191.5 96.9% 25.3%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 42.6 100% 50%;
+  --secondary-foreground: 31.3 85.2% 10.6%;
+  --muted: 190 28.6% 91.8%;
+  --muted-foreground: 196 7.7% 38.2%;
+  --accent: 188.4 96.9% 37.5%;
+  --accent-foreground: 0 0% 17.8401%;
+  --destructive: 12.9 75.1% 47.3%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 191.3 22.9% 86.3%;
+  --input: 194.1 12.6% 73.5%;
+  --ring: 191.5 96.9% 25.3%;
+  --radius: 0px;
+  --sidebar-background: 195 66.7% 8%;
+  --sidebar-foreground: 187.5 9.8% 90%;
+  --sidebar-border: 196.7 23.1% 20%;
+}
+
+.dark {
+  --background: 200 60% 2%;
+  --foreground: 187.5 9.8% 83.9%;
+  --card: 196.4 47.8% 4.5%;
+  --card-foreground: 187.5 9.8% 83.9%;
+  --primary: 188.4 96.9% 37.5%;
+  --primary-foreground: 204 71.4% 1.4%;
+  --secondary: 39.8 81.9% 54.5%;
+  --secondary-foreground: 30 88.9% 7.1%;
+  --muted: 192 30.6% 9.6%;
+  --muted-foreground: 192 4.1% 52.2%;
+  --accent: 192.5 81.8% 17.3%;
+  --accent-foreground: 188.2 36.7% 88.2%;
+  --destructive: 11.8 76.2% 55.5%;
+  --destructive-foreground: 0 0% 11.9607%;
+  --border: 196.7 23.1% 15.3%;
+  --input: 196.7 18.4% 19.2%;
+  --ring: 188.5 100% 29.2%;
+  --sidebar-background: 195 66.7% 1.2%;
+  --sidebar-foreground: 187.5 9.8% 83.9%;
+  --sidebar-border: 196.7 23.1% 15.3%;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-sidebar: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --radius-none: 0px;
+  --font-sans: "Roboto Flex", var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+:root {
+  color-scheme: light dark;
 }

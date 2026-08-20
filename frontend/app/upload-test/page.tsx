@@ -1,8 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import InvoiceResult from "./components/InvoiceResult";
-import { OcrResult, resultFromApi } from "./lib/invoice";
+import Link from "next/link";
+import InvoiceResult from "../components/InvoiceResult";
+import { OcrResult, resultFromApi } from "../lib/invoice";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -123,12 +124,20 @@ export default function Home() {
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-4 py-16 dark:bg-zinc-950">
       <main className="flex w-full max-w-3xl flex-col gap-6">
+        <Link
+          href="/"
+          className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+        >
+          ← Back to InvoiceOps
+        </Link>
+
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
             Invoice Extractor
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Upload one or more pages (PNG, JPG, PDF, or TIFF) of an invoice to extract its details.
+            Manual testing tool - upload one or more pages (PNG, JPG, PDF, or TIFF) of an invoice
+            and run them through OCR directly, outside the Outlook ingestion pipeline.
           </p>
         </div>
 
@@ -187,7 +196,7 @@ export default function Home() {
             <button
               onClick={handleExtract}
               disabled={status === "loading"}
-              className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              className="flex-1 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {status === "loading" ? "Extracting…" : "Extract invoice"}
             </button>

@@ -88,6 +88,7 @@ export type InvoiceFilters = {
   vendor?: string;
   invoiceNumber?: string;
   purchaseOrderNumber?: string;
+  search?: string; // subject or message ID substring
 };
 
 export type DailyStats = {
@@ -133,6 +134,18 @@ export type DeadLetterEmail = {
   moved_at: string;
 };
 
+export type ProcessingEventOutcome = "success" | "failed" | "skipped" | "info";
+
+export type ProcessingEvent = {
+  id: number;
+  attempt: number;
+  stage: string;
+  outcome: ProcessingEventOutcome;
+  message: string | null;
+  detail: Record<string, unknown> | null;
+  created_at: string;
+};
+
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
 // All calls hit the FastAPI backend directly via authFetch (which prefixes
@@ -151,6 +164,7 @@ export async function fetchInvoices(
   if (filters.vendor) params.set("vendor", filters.vendor);
   if (filters.invoiceNumber) params.set("invoice_number", filters.invoiceNumber);
   if (filters.purchaseOrderNumber) params.set("purchase_order_number", filters.purchaseOrderNumber);
+  if (filters.search) params.set("search", filters.search);
 
   const res = await authFetch(`/api/invoices?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to load invoices.");
@@ -206,6 +220,12 @@ export async function fetchKpis(
 
   const res = await authFetch(`/api/kpis${qs ? `?${qs}` : ""}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to load KPIs.");
+  return res.json();
+}
+
+export async function fetchProcessingEvents(authFetch: AuthFetch, id: number): Promise<{ items: ProcessingEvent[] }> {
+  const res = await authFetch(`/api/invoices/${id}/events`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to load processing log.");
   return res.json();
 }
 

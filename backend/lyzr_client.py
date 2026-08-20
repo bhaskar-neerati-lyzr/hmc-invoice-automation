@@ -20,7 +20,7 @@ OCR_INSTRUCTION = "Extract the invoice data from this document."
 ASSET_UPLOAD_PARAMS = {
     "parser_provider": "lyzr_parse",
     "parsing_mode": "full",
-    "enable_vlm": "false",
+    "enable_vlm": "true",
     "vlm_provider": "openai",
     "vlm_model": "gpt-4o",
     "extract_tables": "true",

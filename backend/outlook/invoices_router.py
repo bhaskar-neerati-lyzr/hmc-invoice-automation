@@ -86,6 +86,7 @@ def list_invoices(
     vendor: str | None = Query(default=None, description="Case-insensitive substring match on extracted vendor name"),
     invoice_number: str | None = Query(default=None, description="Case-insensitive substring match"),
     purchase_order_number: str | None = Query(default=None, description="Case-insensitive substring match"),
+    search: str | None = Query(default=None, description="Case-insensitive substring match on subject or message ID"),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
 ):
@@ -95,6 +96,9 @@ def list_invoices(
         if status:
             query = query.filter(models.Email.status.in_(status))
         query = _apply_date_range(query, date_from, date_to)
+        if search:
+            pattern = f"%{search}%"
+            query = query.filter(or_(models.Email.subject.ilike(pattern), models.Email.message_id.ilike(pattern)))
         if sender:
             pattern = f"%{sender}%"
             query = query.filter(or_(models.Email.sender_name.ilike(pattern), models.Email.sender_email.ilike(pattern)))
@@ -300,6 +304,38 @@ def get_invoice(email_id: int):
                     for li in invoice.line_items
                 ],
             },
+        }
+
+
+@router.get("/{email_id}/events")
+def get_events(email_id: int):
+    """Full per-attempt processing history for one email - what
+    get_invoice's status/error_message/retry_count only ever show the
+    latest snapshot of."""
+    with database.get_session() as session:
+        exists = session.query(models.Email.id).filter(models.Email.id == email_id).first()
+        if exists is None:
+            raise HTTPException(404, "Not found")
+
+        events = (
+            session.query(models.ProcessingEvent)
+            .filter(models.ProcessingEvent.email_id == email_id)
+            .order_by(models.ProcessingEvent.created_at)
+            .all()
+        )
+        return {
+            "items": [
+                {
+                    "id": e.id,
+                    "attempt": e.attempt,
+                    "stage": e.stage,
+                    "outcome": e.outcome,
+                    "message": e.message,
+                    "detail": e.detail,
+                    "created_at": e.created_at.isoformat(),
+                }
+                for e in events
+            ]
         }
 
 

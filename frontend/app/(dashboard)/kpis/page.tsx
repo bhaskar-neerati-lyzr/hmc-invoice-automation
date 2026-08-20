@@ -77,7 +77,7 @@ export default function KpisPage() {
     if (statusParam) params.set("status", statusParam);
     if (from) params.set("date_from", from);
     if (to) params.set("date_to", to);
-    router.push(`/outlook-invoices?${params.toString()}`);
+    router.push(`/?${params.toString()}`);
   }
 
   return (
@@ -103,7 +103,7 @@ export default function KpisPage() {
               className={
                 "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors " +
                 (!useCustom && preset === p.key
-                  ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
+                  ? "bg-primary text-primary-foreground"
                   : "border border-zinc-300 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800")
               }
             >
@@ -162,7 +162,7 @@ export default function KpisPage() {
                   <span className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">{value.toLocaleString()}</span>
                   {clickable && (
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                      <div className="h-full rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ width: `${pctOfTotal}%` }} />
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${pctOfTotal}%` }} />
                     </div>
                   )}
                 </button>

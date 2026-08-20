@@ -127,6 +127,43 @@ def _save_attachments(message_id: str, records: list[dict]) -> None:
             )
 
 
+def _current_attempt(message_id: str) -> int:
+    """1-based attempt number for the run about to start - retry_count only
+    increments on failure (_mark_failed), so this is the count of failed
+    attempts so far, plus the one in progress."""
+    with database.get_session() as session:
+        email = session.query(models.Email).filter_by(message_id=message_id).one()
+        return email.retry_count + 1
+
+
+def _log_event(
+    message_id: str,
+    attempt: int,
+    stage: str,
+    outcome: str,
+    message: str | None = None,
+    detail: dict | None = None,
+) -> None:
+    """Appends one ProcessingEvent row - the step-by-step history behind a
+    single Email row's latest-snapshot-only status/error_message. Never
+    raises past a missing Email row into the caller's try/except, since a
+    logging failure shouldn't itself fail processing - but that should only
+    ever happen if this is called before _claim_or_retry_message succeeds,
+    which every call site here avoids."""
+    with database.get_session() as session:
+        email = session.query(models.Email).filter_by(message_id=message_id).one()
+        session.add(
+            models.ProcessingEvent(
+                email_id=email.id,
+                attempt=attempt,
+                stage=stage,
+                outcome=outcome,
+                message=message,
+                detail=detail,
+            )
+        )
+
+
 def _mark_status(
     message_id: str, status: str, error: str | None = None, duration_ms: int | None = None
 ) -> None:
@@ -332,6 +369,9 @@ async def process_notification(message_id: str) -> None:
     def elapsed_ms() -> int:
         return round((time.monotonic() - start) * 1000)
 
+    attempt = _current_attempt(message_id)
+    _log_event(message_id, attempt, "claimed", "success")
+
     already_is_invoice = _existing_invoice_is_invoice(message_id)
     if already_is_invoice is not None:
         # A prior attempt got all the way through OCR and saved an Invoice
@@ -341,6 +381,13 @@ async def process_notification(message_id: str) -> None:
         await _tag_email(
             message_id,
             graph_client.CATEGORY_PROCESSED if already_is_invoice else graph_client.CATEGORY_NOT_INVOICE,
+        )
+        _log_event(
+            message_id,
+            attempt,
+            "outlook_tagged",
+            "success",
+            message="prior attempt already saved an invoice; finishing status/tag only, OCR not re-run",
         )
         logger.info("message %s already had a saved invoice from a prior attempt, finishing status only", message_id)
         return
@@ -357,33 +404,81 @@ async def process_notification(message_id: str) -> None:
 
         message = await graph_client.fetch_message(message_id)
         _update_email_from_message(message_id, message)
+        _log_event(
+            message_id,
+            attempt,
+            "message_fetched",
+            "success",
+            detail={"subject": message.get("subject"), "has_attachments": message.get("hasAttachments")},
+        )
 
         if not message.get("hasAttachments"):
             _mark_status(message_id, "skipped_no_attachments", duration_ms=elapsed_ms())
             await _tag_email(message_id, graph_client.CATEGORY_SKIPPED_NO_ATTACHMENTS)
+            _log_event(message_id, attempt, "skipped_no_attachments", "skipped")
             logger.info("message %s has no attachments, skipping", message_id)
             return
 
         attachments = await graph_client.fetch_attachments(message_id)
         forwardable, attachment_records = _filter_attachments(attachments)
         _save_attachments(message_id, attachment_records)
+        _log_event(
+            message_id,
+            attempt,
+            "attachments_fetched",
+            "success",
+            message=f"{len(forwardable)} of {len(attachment_records)} forwarded to OCR",
+            detail={
+                "attachments": [
+                    {
+                        "filename": r["filename"],
+                        "content_type": r["content_type"],
+                        "forwarded": r["forwarded"],
+                        "skip_reason": r["skip_reason"],
+                    }
+                    for r in attachment_records
+                ]
+            },
+        )
 
         if not forwardable:
             _mark_status(message_id, "skipped_bad_attachment", duration_ms=elapsed_ms())
             await _tag_email(message_id, graph_client.CATEGORY_SKIPPED_BAD_ATTACHMENT)
+            _log_event(message_id, attempt, "skipped_bad_attachment", "skipped")
             logger.info("message %s has no OCR-eligible attachments, skipping", message_id)
             return
 
         ocr_start = time.monotonic()
         result = await _forward_to_ocr(forwardable)
         ocr_duration_ms = round((time.monotonic() - ocr_start) * 1000)
+        _log_event(
+            message_id,
+            attempt,
+            "ocr_forwarded",
+            "success",
+            message=f"OCR responded in {ocr_duration_ms}ms",
+            detail={
+                "session_id": result.get("session_id"),
+                "ocr_duration_ms": ocr_duration_ms,
+                "is_invoice": result.get("is_invoice"),
+                # The agent's reply verbatim, before parse_agent_output's
+                # unwrap/repair passes touch it - this is what would have
+                # shown the Wally's Hardware double-encoding bug directly
+                # in the UI instead of needing a docker exec to find it.
+                "raw_agent_text": result.get("raw_agent_text"),
+            },
+        )
 
         _save_invoice(message_id, result, ocr_duration_ms=ocr_duration_ms)
         _mark_status(message_id, "processed", duration_ms=elapsed_ms())
+        _log_event(
+            message_id, attempt, "invoice_saved", "success", detail={"is_invoice": result.get("is_invoice")}
+        )
         await _tag_email(
             message_id,
             graph_client.CATEGORY_PROCESSED if result.get("is_invoice") else graph_client.CATEGORY_NOT_INVOICE,
         )
+        _log_event(message_id, attempt, "outlook_tagged", "success")
         logger.info(
             "message %s processed: is_invoice=%s session_id=%s duration_ms=%s ocr_duration_ms=%s",
             message_id,
@@ -395,5 +490,6 @@ async def process_notification(message_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - deliberately broad, this is the last line of defense
         logger.exception("message %s failed to process after %sms", message_id, elapsed_ms())
         _mark_failed(message_id, error=str(exc), duration_ms=elapsed_ms())
+        _log_event(message_id, attempt, "failed", "failed", message=str(exc))
         await _tag_email(message_id, graph_client.CATEGORY_FAILED)
         raise

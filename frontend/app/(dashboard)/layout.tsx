@@ -7,7 +7,7 @@ import { useAuth } from "../lib/auth";
 import { changePassword } from "../lib/account";
 
 const NAV_LINKS = [
-  { href: "/outlook-invoices", label: "Emails" },
+  { href: "/", label: "Emails" },
   { href: "/kpis", label: "KPIs" },
   { href: "/dead-letter", label: "Dead Letter" },
 ];
@@ -23,53 +23,66 @@ function DashboardNav() {
   }
 
   return (
-    <nav className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center gap-1">
-        {NAV_LINKS.map((link) => {
-          const active = pathname === link.href;
-          return (
+    <nav className="flex items-center justify-between gap-3 bg-sidebar px-4 py-2 text-sidebar-foreground">
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center bg-primary text-xs font-bold text-primary-foreground">
+            IO
+          </span>
+          <span className="text-sm font-semibold tracking-tight">InvoiceOps</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {NAV_LINKS.map((link) => {
+            // The Emails tab (href "/") also covers its own detail route,
+            // /emails/[id] - not just an exact match on "/".
+            const active =
+              link.href === "/" ? pathname === "/" || pathname.startsWith("/emails/") : pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={
+                  "px-3 py-1.5 text-sm font-medium transition-colors " +
+                  (active ? "bg-primary text-primary-foreground" : "text-sidebar-foreground/70 hover:bg-white/10 hover:text-sidebar-foreground")
+                }
+              >
+                {link.label}
+              </Link>
+            );
+          })}
+          {user?.role === "admin" && (
             <Link
-              key={link.href}
-              href={link.href}
+              href="/users"
               className={
-                "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors " +
-                (active
-                  ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
-                  : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
+                "px-3 py-1.5 text-sm font-medium transition-colors " +
+                (pathname === "/users"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-sidebar-foreground/70 hover:bg-white/10 hover:text-sidebar-foreground")
               }
             >
-              {link.label}
+              Users
             </Link>
-          );
-        })}
-        {user?.role === "admin" && (
-          <Link
-            href="/users"
-            className={
-              "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors " +
-              (pathname === "/users"
-                ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
-                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
-            }
-          >
-            Users
-          </Link>
-        )}
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-3 text-sm">
         <Link
           href="/account"
           className={
-            "text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 " +
-            (pathname === "/account" ? "font-semibold text-zinc-900 dark:text-zinc-50" : "")
+            "flex items-center gap-1.5 text-sidebar-foreground/80 hover:text-sidebar-foreground " +
+            (pathname === "/account" ? "font-semibold text-sidebar-foreground" : "")
           }
         >
           {user?.email}
-          {user?.role && <span className="ml-1 text-xs text-zinc-400 dark:text-zinc-500">({user.role})</span>}
+          {user?.role && (
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+              {user.role}
+            </span>
+          )}
         </Link>
         <button
           onClick={handleLogout}
-          className="text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+          className="text-xs font-medium text-sidebar-foreground/60 hover:text-sidebar-foreground"
         >
           Sign out
         </button>
@@ -161,7 +174,7 @@ function ForcePasswordReset({ onDone }: { onDone: () => void }) {
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          className="bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? "Saving…" : "Set password"}
         </button>
@@ -196,7 +209,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   if (user.role !== "admin" && pathname === "/users") {
-    router.replace("/outlook-invoices");
+    router.replace("/");
     return null;
   }
 

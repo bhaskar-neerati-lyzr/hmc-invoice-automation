@@ -7,8 +7,11 @@ fitz.open(stream=..., filetype=...) call, just with a different filetype.
 
 import fitz  # PyMuPDF
 
-# ~180 DPI (both formats are defined at 72 DPI, so a 2.5x render matrix gets us there).
-RENDER_SCALE = 2.5
+# ~300 DPI (both formats are defined at 72 DPI, so a ~4.17x render matrix gets us there).
+# Raised from 2.5x/180 DPI - that was too low-res for at least one PDF that OCR'd fine
+# when uploaded straight to the Lyzr agent (which presumably rasterizes at higher DPI
+# itself), but failed to extract through this app's own rasterization step.
+RENDER_SCALE = 300 / 72
 
 
 def _render_to_jpegs(file_bytes: bytes, filetype: str) -> list[bytes]:

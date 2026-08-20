@@ -73,6 +73,9 @@ class Email(Base):
     attachments: Mapped[list["EmailAttachment"]] = relationship(
         back_populates="email", cascade="all, delete-orphan", order_by="EmailAttachment.id"
     )
+    processing_events: Mapped[list["ProcessingEvent"]] = relationship(
+        back_populates="email", cascade="all, delete-orphan", order_by="ProcessingEvent.created_at"
+    )
 
 
 class EmailAttachment(Base):
@@ -153,6 +156,28 @@ class InvoiceLineItem(Base):
     total_price: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="line_items")
+
+
+class ProcessingEvent(Base):
+    """One row per pipeline stage processor.py passes through for a given
+    Email, per attempt - the step-by-step history that Email's own
+    status/error_message/retry_count columns only ever show the latest
+    snapshot of. Written once and never updated or deleted afterward
+    (except via Email's cascade)."""
+
+    __tablename__ = "processing_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"), index=True)
+    attempt: Mapped[int] = mapped_column(Integer)
+    stage: Mapped[str] = mapped_column(String(64))
+    # success | failed | skipped | info
+    outcome: Mapped[str] = mapped_column(String(16))
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    email: Mapped["Email"] = relationship(back_populates="processing_events")
 
 
 class DeadLetterEmail(Base):

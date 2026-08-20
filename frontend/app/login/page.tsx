@@ -8,7 +8,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, user } = useAuth();
-  const next = searchParams.get("next") || "/outlook-invoices";
+  const next = searchParams.get("next") || "/";
 
   const seeded = useRef(false);
   useEffect(() => {
@@ -85,7 +85,7 @@ function LoginForm() {
       <button
         type="submit"
         disabled={loading}
-        className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+        className="bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {loading ? "Signing in…" : "Sign in"}
       </button>

@@ -98,7 +98,7 @@ function CredentialsDialog({
         </button>
         <button
           onClick={handleCopy}
-          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
           {copied ? "Copied!" : "Copy"}
         </button>
@@ -180,7 +180,7 @@ function AddUserDialog({ onClose, onCreated }: { onClose: () => void; onCreated:
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Adding…" : "Add user"}
           </button>
@@ -326,7 +326,7 @@ export default function UsersPage() {
           </div>
           <button
             onClick={() => setShowAdd(true)}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
             Add user
           </button>

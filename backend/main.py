@@ -92,7 +92,13 @@ async def extract_text(files: list[UploadFile] = File(...)):
         )
         raw_value = await lyzr_client.run_chat_inference(client, headers, session_id, asset_ids)
 
-    return {**parse_agent_output(raw_value), "session_id": session_id}
+    # raw_agent_text carries the agent's reply verbatim, before
+    # parse_agent_output's unwrap/repair passes touch it - callers that want
+    # to log/debug exactly what the agent said (see outlook/processor.py's
+    # ProcessingEvent logging) need this, since the parsed fields alone
+    # don't show what the raw reply looked like when parsing had to recover
+    # from something malformed.
+    return {**parse_agent_output(raw_value), "session_id": session_id, "raw_agent_text": raw_value}
 
 
 @app.get("/api/health")
