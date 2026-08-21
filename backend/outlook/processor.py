@@ -199,6 +199,18 @@ def _mark_failed(message_id: str, error: str, duration_ms: int | None = None) ->
             )
 
 
+def is_dead_lettered(message_id: str) -> bool:
+    """True once _mark_failed has written a DeadLetterEmail row for this
+    message - i.e. the DEAD_LETTER_RETRY_THRESHOLD-th failed attempt has
+    already happened. outlook/worker.py checks this after a failure to
+    decide whether to explicitly push the message to the SQS DLQ (see
+    queue_client.send_to_dlq) instead of leaving it for another retry."""
+    with database.get_session() as session:
+        return (
+            session.query(models.DeadLetterEmail).filter_by(message_id=message_id).first() is not None
+        )
+
+
 def _save_invoice(message_id: str, result: dict, ocr_duration_ms: int | None = None) -> None:
     with database.get_session() as session:
         email = session.query(models.Email).filter_by(message_id=message_id).one()

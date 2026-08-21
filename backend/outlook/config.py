@@ -41,15 +41,24 @@ OUTLOOK_UPDATE_CATEGORIES = os.environ.get("OUTLOOK_UPDATE_CATEGORIES_FLAG", "tr
 )
 
 # outlook/superflow_router.py enqueues every incoming {message_id} here;
-# outlook/worker.py (a separate process - `python -m outlook.worker`) is
-# what actually consumes it and calls processor.process_notification.
-# Always required now - there is no non-queue fallback path anymore (the
-# old in-process BackgroundTasks path was removed along with the retired
-# Graph webhook it lived in). Standard queue (not FIFO) - see
-# misc/setup-guides/05-outlook-inbox-ocr-architecture.md for why. For local
-# testing without a real AWS account, see LocalStack in
+# outlook/worker.py (a background thread inside this same backend process
+# - see main.py's lifespan) is what actually consumes it and calls
+# processor.process_notification. Always required now - there is no
+# non-queue fallback path anymore (the old in-process BackgroundTasks path
+# was removed along with the retired Graph webhook it lived in). Standard
+# queue (not FIFO) - see misc/setup-guides/05-outlook-inbox-ocr-architecture.md
+# for why. For local testing without a real AWS account, see LocalStack in
 # docker-compose.dev.yml and backend/.env.example.
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
+
+# Where outlook/worker.py explicitly moves a message once
+# processor.py's own retry accounting (DEAD_LETTER_RETRY_THRESHOLD, in
+# processor.py) gives up on it - driven by that same threshold, not by
+# SQS's own receive-count-based redrive policy alone (which still exists
+# as a coarser safety net - see localstack/init-queues.sh's
+# MAX_RECEIVE_COUNT comment for why it's set higher than
+# DEAD_LETTER_RETRY_THRESHOLD, not equal to it).
+SQS_DLQ_URL = os.environ.get("SQS_DLQ_URL", "")
 
 # How long the worker's ReceiveMessage call blocks waiting for a message
 # before returning empty - see the 05 doc's "long polling" section. 20 is

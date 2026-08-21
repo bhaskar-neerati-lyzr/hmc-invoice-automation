@@ -12,10 +12,14 @@ ever justifies splitting it back out - nothing here changes either way:
 
 Long-polls SQS, and for each message calls the *unchanged*
 processor.process_notification(message_id). A message is deleted from the
-queue only after processing returns without raising; an exception leaves it
-in place for SQS's own visibility-timeout-based redelivery (and, after
-enough failed receives, its dead-letter queue) to take over - see
-processor.process_notification's docstring for why it re-raises on failure.
+queue only after processing returns without raising. On failure: if this
+was the DEAD_LETTER_RETRY_THRESHOLD-th attempt (processor.py already wrote
+a DeadLetterEmail row for it), the message is explicitly pushed to the DLQ
+and deleted from the main queue (see _handle_one); otherwise it's left in
+place for SQS's own visibility-timeout-based redelivery to take over - see
+processor.process_notification's docstring for why it re-raises on
+failure. SQS's own receive-count-based redrive policy still exists as a
+coarser safety net underneath this (see localstack/init-queues.sh).
 
 Deliberately sequential (one message at a time) - the 05 doc's scaling
 story is horizontal (more backend tasks = more parallel OCR calls, tunable
@@ -49,8 +53,27 @@ async def _handle_one(message: dict) -> None:
 
     try:
         await processor.process_notification(message_id)
-    except Exception:
+    except Exception as exc:
         # Already logged with full context inside process_notification.
+        if processor.is_dead_lettered(message_id):
+            # DEAD_LETTER_RETRY_THRESHOLD-th failure - processor.py already
+            # wrote the DeadLetterEmail row; explicitly move the message to
+            # the DLQ now too, rather than leaving it in the main queue for
+            # SQS's own (coarser, receive-count-based) redrive policy to
+            # eventually catch up on its own.
+            try:
+                queue_client.send_to_dlq(message_id, str(exc))
+            except Exception:
+                logger.exception(
+                    "message %s exhausted retries but failed to push to DLQ - "
+                    "leaving in the main queue for SQS's own redrive policy instead",
+                    message_id,
+                )
+                return
+            queue_client.delete_message(receipt_handle)
+            logger.error("message %s exhausted retries, moved to DLQ", message_id)
+            return
+
         # Not deleting the message is what leaves it for SQS to redeliver -
         # swallow here so one bad message doesn't kill the loop for the rest
         # of this batch.

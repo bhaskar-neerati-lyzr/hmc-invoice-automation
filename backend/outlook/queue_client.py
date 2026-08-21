@@ -54,3 +54,20 @@ def delete_message(receipt_handle: str) -> None:
     (or never receiving) a message is the one thing that stops SQS from
     redelivering it. See outlook/worker.py."""
     _get_client().delete_message(QueueUrl=config.SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
+
+
+def send_to_dlq(message_id: str, error: str) -> None:
+    """Explicitly moves a message to the dead-letter queue, once
+    processor.py's own retry accounting has given up on it (see
+    outlook/worker.py's _handle_one) - driven by
+    DEAD_LETTER_RETRY_THRESHOLD, the same threshold that writes the
+    DeadLetterEmail row, rather than left to SQS's own receive-count-based
+    redrive policy alone. Caller is responsible for deleting the message
+    from the main queue afterward - this only adds it to the DLQ, it
+    doesn't remove it from anywhere."""
+    if not config.SQS_DLQ_URL:
+        raise RuntimeError("Missing required environment variable: SQS_DLQ_URL")
+    _get_client().send_message(
+        QueueUrl=config.SQS_DLQ_URL,
+        MessageBody=json.dumps({"message_id": message_id, "error": error}),
+    )
