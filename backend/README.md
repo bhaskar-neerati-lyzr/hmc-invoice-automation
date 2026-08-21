@@ -2,9 +2,9 @@
 
 Proxies file uploads to your Lyzr OCR agent. Keeps `LYZR_API_KEY` server-side only.
 
-Also includes the **Outlook mailbox automation** (`outlook/`): a Microsoft Graph webhook that watches one inbox, fetches new emails' attachments, and forwards OCR-eligible ones (png/jpg/pdf) through the exact same `/api/ocr` pipeline the frontend uses — results are persisted to Postgres and readable via `/api/invoices`. Every attachment Graph reports on an email (including skipped/unsupported ones) is stored in full, not just its filename/metadata, so the original file is recoverable later via `/api/invoices/{id}/attachments/{attachment_id}`. It runs in this same process/port, not a separate server. Every route under `/api/invoices` requires HTTP Basic Auth (`INVOICES_AUTH_USER`/`INVOICES_AUTH_PASSWORD`) — `/api/ocr` and `/api/outlook/notify` are unauthenticated (the latter can't be, since Graph itself calls it). The browser itself never sends these credentials or calls `/api/invoices*` directly — the frontend's Next.js server does that server-to-server, behind its own login page (`frontend/app/login`, `frontend/middleware.ts`). See that app's docs for the full picture.
+Also includes the **Outlook mailbox automation** (`outlook/`): Lyzr Superflow polls one inbox and calls `POST /api/superflow/process` with a `message_id` whenever it finds something new; this app fetches that message's attachments directly from Graph and forwards OCR-eligible ones (png/jpg/pdf) through the exact same `/api/ocr` pipeline the frontend uses — results are persisted to Postgres and readable via `/api/invoices`. Every attachment Graph reports on an email (including skipped/unsupported ones) is stored in full, not just its filename/metadata, so the original file is recoverable later via `/api/invoices/{id}/attachments/{attachment_id}`. It runs in this same process/port, not a separate server. `/api/invoices*` and `/api/kpis*` require a signed-in user (JWT, see `outlook/auth.py`); `/api/superflow/process` requires a shared API key (`SUPERFLOW_API_KEY`, not a user session - see `outlook/superflow_router.py`); `/api/ocr` is unauthenticated (the frontend's upload-test page calls it directly from the browser). The dashboard's browser-side code carries its own JWT and calls `/api/invoices*`/`/api/kpis*` directly - there's no server-side proxy layer anymore, see `frontend/app/lib/auth.tsx`.
 
-For running the app, filling in `.env`, and setting up the Graph webhook tunnel, see **[../setup-guides/](../setup-guides/)**.
+For running the app and filling in `.env`, see **[../setup-guides/](../setup-guides/)**.
 
 ## Setup
 
@@ -12,9 +12,9 @@ For running the app, filling in `.env`, and setting up the Graph webhook tunnel,
 python -m venv .venv
 .venv/Scripts/activate        # Windows
 pip install -r requirements-dev.txt  # runtime deps + pytest; use requirements.txt alone for a prod install
-cp .env.example .env           # fill in LYZR_API_KEY, LYZR_AGENT_ID, and the GRAPH_*/DATABASE_URL vars
-                                # also set INVOICES_AUTH_USER/PASSWORD - the /api/invoices* routes and the
-                                # frontend's /outlook-invoices page both refuse all requests until these are set
+cp .env.example .env           # fill in LYZR_API_KEY, LYZR_AGENT_ID, GRAPH_*/DATABASE_URL,
+                                # SUPERFLOW_API_KEY, SQS_QUEUE_URL, and APP_JWT_SECRET/SEED_ADMIN_*
+                                # - the app refuses to do anything useful until these are set
 ```
 
 ### Database (for the Outlook automation)
@@ -42,26 +42,20 @@ Any time `outlook/models.py` changes, generate a new migration with `alembic rev
 uvicorn main:app --reload --port 8000
 ```
 
-This single process serves both the existing upload flow (`/api/ocr`, used by the frontend) and the Outlook automation's webhook + invoices endpoints — nothing else needs to run alongside it besides the frontend (`npm run dev`) and Postgres.
+This single process serves both the existing upload flow (`/api/ocr`, used by the frontend) and the Outlook automation's Superflow + invoices endpoints. You also need `python -m outlook.worker` running somewhere (its own process/container - see `docker-compose.yml`) to actually consume what gets enqueued, and a real SQS queue (or LocalStack for local dev - see `../docker-compose.dev.yml`) for `SQS_QUEUE_URL` to point at.
 
-### Testing the Outlook webhook locally
+### Testing the Superflow endpoint locally
 
-Graph needs a public HTTPS URL to call, so during local dev expose this same port with a tunnel:
-
-```bash
-devtunnel host -p 8000 --allow-anonymous
-# or: ngrok http 8000
-```
-
-Then create the subscription, pointing at the tunnel URL + `/api/outlook/notify`:
+No public tunnel needed anymore - this endpoint is called directly (by Superflow in production, or by hand while testing), not by an inbound Microsoft callback. With the backend, `outlook.worker`, and a queue (real or LocalStack) all running, send a real message from the target mailbox's inbox and grab its Graph message ID, then:
 
 ```bash
-python -m outlook.subscription_cli create --notification-url https://<your-tunnel>.devtunnels.ms/api/outlook/notify
+curl -X POST http://localhost:8000/api/superflow/process \
+  -H "Authorization: Bearer $SUPERFLOW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"message_id": "<the Graph message id>"}'
 ```
 
-Watch the `uvicorn` console for the validation handshake, then send a real test email (with a PNG/JPG/PDF attachment) to the target mailbox — you should see it logged as fetched, filtered, forwarded to `/api/ocr`, and saved, and it'll show up at `GET /api/invoices`.
-
-Gotchas: the tunnel URL changes on every restart, so re-run `subscription_cli.py create` (and optionally `delete` the old one) each time; the subscription itself expires in ~2.9 days with no automated renewal in this build — re-run `subscription_cli.py renew --id <id>` manually, or `create` a new one.
+Watch the `outlook.worker` console for it being fetched, filtered, forwarded to `/api/ocr`, and saved - it'll show up at `GET /api/invoices`.
 
 ## Endpoint
 
@@ -84,16 +78,16 @@ The agent replies with `{text, partial, message, ...}` as a JSON string, sometim
 
 ### `outlook/` — mailbox automation
 
-- `config.py` — env var loading (`GRAPH_*`, `DATABASE_URL`).
+- `config.py` — env var loading (`GRAPH_*`, `SUPERFLOW_API_KEY`, `SQS_QUEUE_URL`, `DATABASE_URL`, ...).
 - `graph_auth.py` — MSAL client-credentials token acquisition.
-- `graph_client.py` — Graph calls: fetch message/attachments, subscription create/renew/delete/list.
-- `models.py` — SQLAlchemy models (`Email`, `EmailAttachment`, `Invoice`, `InvoiceLineItem`).
+- `graph_client.py` — Graph calls: fetch message/attachments, set Outlook status categories.
+- `models.py` — SQLAlchemy models (`Email`, `EmailAttachment`, `Invoice`, `InvoiceLineItem`, `ProcessingEvent`, `User`, `DeadLetterEmail`).
 - `database.py` — engine/session setup.
-- `processor.py` — the per-notification workflow: claim/retry the `Email` row → fetch → filter attachments → forward to `/api/ocr` → persist. Also reflects processing status as Outlook categories on the email (`_tag_email`), gated by `OUTLOOK_UPDATE_CATEGORIES_FLAG` (default on) - set to `false` in `.env` to skip writing those tags without affecting ingestion/OCR/persistence. Retry-aware: a message stuck `pending`/`failed` is reclaimed and retried (attachments cleared first, OCR skipped if an `Invoice` row already exists from a prior attempt) rather than reprocessed as new; on failure, `status="failed"` is written *then the exception is re-raised* - required so `worker.py` knows not to delete the SQS message. See `../misc/learning-path/DATABASE.md` for the schema this reads/writes.
-- `webhook_router.py` — `/api/outlook/notify`: validation handshake + notification receipt, fast ack. Hands the actual work to either a FastAPI `BackgroundTask` or SQS (`queue_client.enqueue`), depending on `USE_SQS_QUEUE_FLAG`.
-- `queue_client.py` — thin boto3 SQS wrapper (`enqueue`/`receive_messages`/`delete_message`). Only used when `USE_SQS_QUEUE_FLAG=true`.
-- `worker.py` — standalone SQS consumer (`python -m outlook.worker`): long-polls, calls `processor.process_notification` unchanged, deletes the message only on success. Run this as its own process/container when `USE_SQS_QUEUE_FLAG=true` - nothing consumes the queue otherwise. See `../misc/setup-guides/05-outlook-inbox-ocr-architecture.md` for the full design.
-- `invoices_router.py` — `GET /api/invoices` (list, filterable by `status`/`date_from`/`date_to`/`sender`/`vendor`/`invoice_number`/`purchase_order_number`), `GET /api/invoices/{id}` (detail), `GET /api/invoices/{id}/attachments/{attachment_id}` (raw attachment bytes as originally received from Graph). Every route on this router requires HTTP Basic Auth - see `require_auth()` at the top of the file.
-- `subscription_cli.py` — manual `create`/`renew`/`delete`/`list` for the Graph subscription (no scheduled renewal job in this build).
+- `processor.py` — the per-notification workflow: claim/retry the `Email` row → fetch → filter attachments → forward to `/api/ocr` → persist. Also reflects processing status as Outlook categories on the email (`_tag_email`), gated by `OUTLOOK_UPDATE_CATEGORIES_FLAG` (default on) - set to `false` in `.env` to skip writing those tags without affecting ingestion/OCR/persistence. Retry-aware: a message stuck `pending`/`failed` is reclaimed and retried (attachments cleared first, OCR skipped if an `Invoice` row already exists from a prior attempt) rather than reprocessed as new; on failure, `status="failed"` is written *then the exception is re-raised* - required so `worker.py` knows not to delete the SQS message. Every stage also gets a `ProcessingEvent` row - see the "Processing Log" tab on an email's detail page. See `../misc/learning-path/DATABASE.md` for the schema this reads/writes.
+- `superflow_router.py` — `POST /api/superflow/process`: the endpoint Lyzr Superflow's HTTP node calls with a `message_id` (Bearer-auth'd via `SUPERFLOW_API_KEY`). Enqueues onto SQS and acks immediately - never fetches the message itself.
+- `queue_client.py` — thin boto3 SQS wrapper (`enqueue`/`receive_messages`/`delete_message`).
+- `worker.py` — standalone SQS consumer (`python -m outlook.worker`): long-polls, calls `processor.process_notification` unchanged, deletes the message only on success. Always required - nothing else consumes the queue. See `../misc/setup-guides/05-outlook-inbox-ocr-architecture.md` for the full design.
+- `invoices_router.py` — `GET /api/invoices` (list, filterable by `status`/`date_from`/`date_to`/`sender`/`vendor`/`invoice_number`/`purchase_order_number`/`search`), `GET /api/invoices/{id}` (detail), `GET /api/invoices/{id}/events` (processing log), `GET /api/invoices/{id}/attachments/{attachment_id}` (raw attachment bytes as originally received from Graph). Every route on this router requires a signed-in user (JWT) - see `get_current_user()` in `auth.py`.
+- `auth.py`/`auth_router.py` — password hashing, JWT issue/verify, login/account/user-management endpoints.
 
-See `../outlook-email-ingestion-plan/` for the fuller design docs (Microsoft portal setup, webhook concepts, client discovery questions) this module implements.
+See `../outlook-email-ingestion-plan/` for the fuller design docs (Microsoft portal setup, webhook concepts, client discovery questions) - written for the retired Graph-webhook design, kept for the Microsoft-portal-setup steps (Azure AD app registration, Application Access Policy) which are unchanged.

@@ -9,6 +9,21 @@ services:
       target: dev
     volumes:
       - ./backend:/app
+    environment:
+      # Points boto3 at LocalStack instead of real AWS - queue_client.py
+      # builds its boto3 client lazily, only on first actual use (i.e. only
+      # when outlook/superflow_router.py's /api/superflow/process is
+      # actually called). See backend/.env.example for the LocalStack
+      # SQS_QUEUE_URL value to use. AWS_DEFAULT_REGION specifically (not
+      # AWS_REGION) - verified only the former is picked up automatically
+      # by the pinned boto3/botocore version.
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    depends_on:
+      localstack:
+        condition: service_healthy
 
   frontend:
     build:
@@ -22,6 +37,25 @@ services:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
       - frontend_next_cache:/app/.next
+
+  # Local-only emulation of SQS so outlook/queue_client.py and
+  # outlook/worker.py (embedded in the backend process - see main.py) can
+  # be exercised against a real SQS API without an AWS account.
+  # init-queues.sh creates the main queue + DLQ automatically once
+  # LocalStack reports ready; `backend` waits on this being healthy first.
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sqs
+    volumes:
+      - ./localstack/init-queues.sh:/etc/localstack/init/ready.d/init-queues.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   frontend_node_modules:

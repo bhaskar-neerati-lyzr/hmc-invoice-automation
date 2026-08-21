@@ -1,15 +1,10 @@
 """Thin client for the Microsoft Graph calls this module needs: reading a
-message and its attachments, and managing the change-notification subscription.
+message and its attachments, and tagging status categories on it.
 """
-
-from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from . import config, graph_auth
-
-# Mail resource subscriptions are capped at ~4230 minutes by Microsoft Graph.
-MAX_SUBSCRIPTION_MINUTES = 4230
 
 # Outlook category names used to reflect processing status directly on the
 # email (visible in Outlook as colored tags, like Gmail labels). The lyzr_
@@ -93,44 +88,3 @@ async def set_message_category(message_id: str, category: str) -> None:
             json={"categories": kept + [category]},
         )
     patch_resp.raise_for_status()
-
-
-async def create_subscription(notification_url: str) -> dict:
-    expiration = datetime.now(timezone.utc) + timedelta(minutes=MAX_SUBSCRIPTION_MINUTES)
-    body = {
-        "changeType": "created",
-        "notificationUrl": notification_url,
-        "resource": f"users/{config.GRAPH_MAILBOX_USER_ID}/mailFolders('Inbox')/messages",
-        "expirationDateTime": expiration.isoformat(),
-        "clientState": config.GRAPH_CLIENT_STATE,
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(f"{config.GRAPH_BASE_URL}/subscriptions", headers=_headers(), json=body)
-    resp.raise_for_status()
-    return resp.json()
-
-
-async def renew_subscription(subscription_id: str) -> dict:
-    expiration = datetime.now(timezone.utc) + timedelta(minutes=MAX_SUBSCRIPTION_MINUTES)
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.patch(
-            f"{config.GRAPH_BASE_URL}/subscriptions/{subscription_id}",
-            headers=_headers(),
-            json={"expirationDateTime": expiration.isoformat()},
-        )
-    resp.raise_for_status()
-    return resp.json()
-
-
-async def delete_subscription(subscription_id: str) -> None:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.delete(f"{config.GRAPH_BASE_URL}/subscriptions/{subscription_id}", headers=_headers())
-    if resp.status_code not in (204, 404):
-        resp.raise_for_status()
-
-
-async def list_subscriptions() -> list[dict]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(f"{config.GRAPH_BASE_URL}/subscriptions", headers=_headers())
-    resp.raise_for_status()
-    return resp.json().get("value", [])

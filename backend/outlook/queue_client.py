@@ -1,13 +1,13 @@
-"""Thin SQS client: enqueue from the webhook handler, receive/delete from
-the worker (outlook/worker.py). Standard queue, not FIFO - see
+"""Thin SQS client: enqueue from outlook/superflow_router.py, receive/delete
+from the worker (outlook/worker.py). Standard queue, not FIFO - see
 misc/setup-guides/05-outlook-inbox-ocr-architecture.md for why ordering
 doesn't matter here.
 
 boto3 client is built lazily, on first use - same reasoning as
 graph_auth._get_msal_app: this module is imported transitively by main.py,
 so constructing a client eagerly would mean any AWS credential/config
-problem takes down the whole backend at import time, even when
-USE_SQS_QUEUE is off and nothing here is ever called.
+problem takes down the whole backend at import time, even before the
+first request that actually needs it arrives.
 """
 
 import json

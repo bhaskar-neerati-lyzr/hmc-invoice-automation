@@ -1,4 +1,8 @@
 fastapi==0.115.0
+# Imported directly in auth_router.py, kpis_router.py, superflow_router.py -
+# pinned explicitly rather than relying on fastapi's own transitive pin, so
+# a future fastapi upgrade can't silently change this from underneath us.
+pydantic==2.13.4
 uvicorn[standard]==0.30.6
 httpx==0.27.2
 python-multipart==0.0.9

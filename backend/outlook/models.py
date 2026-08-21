@@ -20,7 +20,8 @@ class Base(DeclarativeBase):
 
 
 class Email(Base):
-    """One row per Microsoft Graph message the webhook has processed.
+    """One row per Microsoft Graph message the Superflow-triggered pipeline
+    has processed.
 
     `message_id` also doubles as the dedup/retry key (see
     processor._claim_or_retry_message): a notification for a message that
@@ -56,10 +57,10 @@ class Email(Base):
     # repair short-circuit) - set alongside every _mark_status() call, never
     # on the "duplicate, skip entirely" fast path. Per-attempt, not
     # cumulative across retries - a retried email's value reflects only its
-    # latest attempt. Deliberately excludes time spent acknowledging Graph's
-    # webhook and (if USE_SQS_QUEUE_FLAG is on) time spent waiting in SQS -
-    # this is processing time only, from the moment process_notification()
-    # starts doing real work.
+    # latest attempt. Deliberately excludes time spent acknowledging the
+    # Superflow request and time spent waiting in SQS - this is processing
+    # time only, from the moment process_notification() starts doing real
+    # work.
     processing_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Attempts made so far (incremented on each failure in
     # processor.process_notification). Once this reaches

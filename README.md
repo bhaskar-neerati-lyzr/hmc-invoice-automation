@@ -2,8 +2,8 @@
 
 Two services (`backend/` FastAPI, `frontend/` Next.js) plus Postgres, run via Docker Compose. Proxies uploads to a Lyzr OCR agent, and optionally ingests invoices automatically from an Outlook mailbox (`backend/outlook/`).
 
-- **backend/** — FastAPI: `/api/ocr` (upload flow), `/api/outlook/*` (Graph webhook + mailbox automation), `/api/invoices*` (Basic-auth protected). See [backend/README.md](backend/README.md).
-- **frontend/** — Next.js: the manual-upload page, the login-gated `/outlook-invoices` viewer, `/agent-config`.
+- **backend/** — FastAPI: `/api/ocr` (upload flow), `/api/superflow/process` (Lyzr Superflow calls this to trigger mailbox ingestion), `/api/invoices*`/`/api/kpis*` (JWT-protected). See [backend/README.md](backend/README.md).
+- **frontend/** — Next.js: the login-gated dashboard at `/` (emails, KPIs, dead letter, users, account), the unauthenticated manual-upload tester at `/upload-test`, `/agent-config`.
 - **setup-guides/** — env setup, tunnel setup, AWS ECS deployment architecture.
 - **learning-path/** — guided walkthrough of the codebase.
 
@@ -27,7 +27,7 @@ Backend health check: `GET http://localhost:8000/api/health`. Frontend (always s
 | Flag | Where | Effect |
 | --- | --- | --- |
 | `OUTLOOK_UPDATE_CATEGORIES_FLAG` | `backend/.env` | `true` (default) writes `lyzr_*` status categories back onto emails in the mailbox as they're processed (visible as colored tags in Outlook). `false` skips that write - ingestion/OCR/persistence to Postgres are unaffected either way. See `backend/outlook/config.py` and `processor.py`'s `_tag_email`. |
-| `USE_SQS_QUEUE_FLAG` | `backend/.env` | `false` (default) processes Outlook notifications in-process via a FastAPI `BackgroundTask`. `true` enqueues onto SQS instead - needs the separate `worker` service (`docker compose --profile queue up -d worker`) actually running to consume it. See `misc/setup-guides/05-outlook-inbox-ocr-architecture.md`. |
+| `SUPERFLOW_API_KEY` | `backend/.env` | Bearer token Lyzr Superflow's HTTP node must send on every call to `POST /api/superflow/process`. Not a flag - always required. |
 
 ## Images: dev vs production
 

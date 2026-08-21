@@ -344,26 +344,25 @@ async def _tag_email(message_id: str, category: str) -> None:
 
 
 async def process_notification(message_id: str) -> None:
-    """The deferred work triggered after the webhook has already acked Graph.
+    """The deferred work triggered after the Superflow endpoint has already
+    acknowledged the request and enqueued this message_id.
 
     Always marks the Email row "failed" (with the error) before doing
     anything else on a failure, then re-raises. The DB write is the audit
     trail; the re-raise matters just as much - outlook/worker.py only
     deletes an SQS message after this returns *without* raising, so a
     re-raise is what leaves the message in the queue for SQS's own
-    redelivery/DLQ to take over as the actual retry mechanism. (Under the
-    BackgroundTasks path this re-raise is inert beyond an extra log line -
-    nothing awaits this call there either way.)
+    redelivery/DLQ to take over as the actual retry mechanism.
     """
     if not _claim_or_retry_message(message_id):
         logger.info("message %s already fully processed, skipping", message_id)
         return
 
-    # Starts here, not at webhook receipt - deliberately excludes Graph's
+    # Starts here, not at the Superflow request - deliberately excludes the
     # ack (process_notification only ever runs after the 200 is already
-    # sent) and, with USE_SQS_QUEUE_FLAG on, excludes time spent waiting in
-    # SQS too. Per-attempt: a retried message's duration reflects only its
-    # latest attempt, not a sum across retries.
+    # sent) and excludes time spent waiting in SQS too. Per-attempt: a
+    # retried message's duration reflects only its latest attempt, not a
+    # sum across retries.
     start = time.monotonic()
 
     def elapsed_ms() -> int:

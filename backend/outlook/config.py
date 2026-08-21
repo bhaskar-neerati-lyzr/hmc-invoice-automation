@@ -18,11 +18,16 @@ GRAPH_TENANT_ID = os.environ.get("GRAPH_TENANT_ID")
 GRAPH_CLIENT_ID = os.environ.get("GRAPH_CLIENT_ID")
 GRAPH_CLIENT_SECRET = os.environ.get("GRAPH_CLIENT_SECRET")
 GRAPH_MAILBOX_USER_ID = os.environ.get("GRAPH_MAILBOX_USER_ID")
-GRAPH_CLIENT_STATE = os.environ.get("GRAPH_CLIENT_STATE")
 GRAPH_BASE_URL = os.environ.get("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0")
-GRAPH_NOTIFICATION_URL = os.environ.get("GRAPH_NOTIFICATION_URL", "")
 
 OCR_ENDPOINT_URL = os.environ.get("OCR_ENDPOINT_URL", "http://localhost:8000/api/ocr")
+
+# Shared secret Lyzr Superflow's HTTP node sends on every call to
+# /api/superflow/process (see outlook/superflow_router.py) - a single
+# trusted machine caller, not a human session, so this is a plain API key
+# check rather than the multi-user JWT system. Not enforced here; the
+# router raises when a request actually arrives and this is unset.
+SUPERFLOW_API_KEY = os.environ.get("SUPERFLOW_API_KEY")
 
 # Whether processor.py should write the lyzr_* status categories back onto
 # emails in the mailbox (see graph_client.set_message_category). Ingestion,
@@ -35,16 +40,15 @@ OUTLOOK_UPDATE_CATEGORIES = os.environ.get("OUTLOOK_UPDATE_CATEGORIES_FLAG", "tr
     "no",
 )
 
-# When true, webhook_router.py enqueues {message_id} onto SQS instead of
-# running processor.process_notification in a FastAPI BackgroundTask, and
+# outlook/superflow_router.py enqueues every incoming {message_id} here;
 # outlook/worker.py (a separate process - `python -m outlook.worker`) is
-# what actually calls it. Defaults to false so local dev/docker-compose
-# keeps working without any AWS setup - flip on in deployments that run the
-# worker service and have SQS_QUEUE_URL pointed at a real queue.
-USE_SQS_QUEUE = os.environ.get("USE_SQS_QUEUE_FLAG", "false").strip().lower() in ("true", "1", "yes")
-
-# Required when USE_SQS_QUEUE is true. Standard queue (not FIFO) - see
-# misc/setup-guides/05-outlook-inbox-ocr-architecture.md for why.
+# what actually consumes it and calls processor.process_notification.
+# Always required now - there is no non-queue fallback path anymore (the
+# old in-process BackgroundTasks path was removed along with the retired
+# Graph webhook it lived in). Standard queue (not FIFO) - see
+# misc/setup-guides/05-outlook-inbox-ocr-architecture.md for why. For local
+# testing without a real AWS account, see LocalStack in
+# docker-compose.dev.yml and backend/.env.example.
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
 
 # How long the worker's ReceiveMessage call blocks waiting for a message

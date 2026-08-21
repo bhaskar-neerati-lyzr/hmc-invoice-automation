@@ -26,3 +26,7 @@ next-env.d.ts
 
 #miscelleneous
 misc/
+
+# Local-only SQS emulation (LocalStack) - not needed for anyone else /
+# not part of any deployment, see docker-compose.dev.yml
+localstack/

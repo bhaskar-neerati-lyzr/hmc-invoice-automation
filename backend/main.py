@@ -1,21 +1,35 @@
 import asyncio
+import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 import lyzr_client
 from pdf_render import render_pdf_to_jpegs, render_tiff_to_jpegs
 from response_parser import parse_agent_output
-from outlook.webhook_router import router as outlook_webhook_router
+from outlook import database
+from outlook import worker as outlook_worker
+from outlook.superflow_router import router as outlook_superflow_router
 from outlook.invoices_router import router as outlook_invoices_router
 from outlook.auth_router import router as outlook_auth_router
 from outlook.kpis_router import router as outlook_kpis_router
 
 load_dotenv()
+
+# Without this, Python's logging module has no configured handler in this
+# process, so every logger.info() call anywhere in outlook/* (worker
+# startup, per-message processing) is silently dropped - only WARNING+
+# reaches the console via the default fallback handler. Was previously
+# only set when outlook/worker.py ran standalone (its own __main__ block);
+# now that it's embedded here (see lifespan below), this process needs its
+# own logging config.
+logging.basicConfig(level=logging.INFO)
 
 ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "application/pdf", "image/tiff"}
 
@@ -26,7 +40,20 @@ ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "application/pdf", "image/ti
 # 502 instead of a clear "too large" message).
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
-app = FastAPI(title="Lyzr OCR Proxy")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs the outlook/worker.py SQS-consumer loop as a background thread in
+    # this same process, instead of a separate service/container - see
+    # worker.run_forever's own docstring for why it's a thread (not an
+    # asyncio task) and why a missing/unreachable queue logs rather than
+    # crashing the whole backend on startup.
+    stop_worker = outlook_worker.start_background_thread()
+    yield
+    stop_worker.set()
+
+
+app = FastAPI(title="Lyzr OCR Proxy", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,7 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(outlook_webhook_router)
+app.include_router(outlook_superflow_router)
 app.include_router(outlook_invoices_router)
 app.include_router(outlook_auth_router)
 app.include_router(outlook_kpis_router)
@@ -101,6 +128,19 @@ async def extract_text(files: list[UploadFile] = File(...)):
     return {**parse_agent_output(raw_value), "session_id": session_id, "raw_agent_text": raw_value}
 
 
+def _check_db() -> None:
+    with database.get_session() as session:
+        session.execute(text("SELECT 1"))
+
+
 @app.get("/api/health")
 async def health():
+    # Runs the (blocking) SQLAlchemy call in a thread rather than directly
+    # on the event loop - this endpoint is hit every few seconds by the ECS/
+    # Docker healthcheck, so it shouldn't itself become a source of latency
+    # spikes for real requests sharing the same loop.
+    try:
+        await asyncio.to_thread(_check_db)
+    except Exception as exc:
+        raise HTTPException(503, f"Database unreachable: {exc}")
     return {"status": "ok"}
