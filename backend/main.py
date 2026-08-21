@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -55,9 +56,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Lyzr OCR Proxy", lifespan=lifespan)
 
+def _parse_cors_origins(raw: str) -> list[str]:
+    """CORS_ORIGINS is usually a comma-separated string
+    (https://a.com,https://b.com), but some deployment tooling emits
+    list-shaped config as a JSON-stringified array instead
+    (["https://a.com","https://b.com"]) - accept either. Whitespace around
+    entries is stripped either way, since CORSMiddleware matches origins
+    exactly and a stray leading space would otherwise silently never match."""
+    stripped = raw.strip()
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(origin).strip() for origin in parsed]
+    return [origin.strip() for origin in raw.split(",")]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_origins=_parse_cors_origins(os.environ.get("CORS_ORIGINS", "http://localhost:3000")),
     allow_methods=["*"],
     allow_headers=["*"],
 )
